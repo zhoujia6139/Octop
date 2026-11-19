@@ -167,6 +167,22 @@ class CloudIdentity:
         with self.repo.transaction() as tx:
             yield tx, self._principal(tx, token, "device")
 
+    @contextmanager
+    def authorized_session(self, token: str) -> Iterator[tuple[IdentityTransaction, Principal]]:
+        """Read authority for account or device, excluding MFA challenges."""
+        with self.repo.transaction() as tx:
+            yield tx, self._principal(tx, token)
+
+    @contextmanager
+    def authorized_account(
+        self, token: str, *, admin: bool = False
+    ) -> Iterator[tuple[IdentityTransaction, Principal]]:
+        """Transaction-scoped account authorization for independent cloud services."""
+        with self.repo.transaction() as tx:
+            if admin:
+                tx.lock_bootstrap()
+            yield tx, self._admin(tx, token) if admin else self._principal(tx, token, "account")
+
     def authenticate(self, token: str, *, kind: SessionKind | None = None) -> IdentityView:
         with self.repo.transaction() as tx:
             return self._identity(tx, self._principal(tx, token, kind))

@@ -74,6 +74,16 @@ class LocalTurnRepo:
                 (turn_id, thread_id, now_ts()),
             )
 
+    def belongs_to(self, turn_id: str, thread_id: str) -> bool:
+        with self._db.connect() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM local_turns WHERE turn_id=? AND thread_id=?",
+                    (turn_id, thread_id),
+                ).fetchone()
+                is not None
+            )
+
     def set_status(self, turn_id: str, status: str) -> None:
         finished = None if status in {"running", "awaiting_approval"} else now_ts()
         with self._db.transaction() as conn:

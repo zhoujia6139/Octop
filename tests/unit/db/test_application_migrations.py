@@ -20,8 +20,8 @@ def test_new_watermark_is_independent_of_legacy_version(tmp_path: Path):
         with db.transaction() as conn:
             conn.execute("CREATE TABLE _schema_version (version INTEGER)")
             conn.execute("INSERT INTO _schema_version VALUES (999)")
-        assert migrate_application(db, "cloud") == 2
-        assert migrate_application(db, "cloud") == 2
+        assert migrate_application(db, "cloud") == 3
+        assert migrate_application(db, "cloud") == 3
         with db.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 999
             conn.execute("UPDATE cloud_schema_version SET version=999")
@@ -67,8 +67,8 @@ def test_postgresql_schema_pairs_initialize_idempotently_and_reference_public_id
         try:
             db = PostgresPool(make_conninfo(dsn, options=f"-csearch_path={schema}"))
             for role in ("cloud", "local"):
-                assert migrate_application(db, role) == (2 if role == "cloud" else 1)
-                assert migrate_application(db, role) == (2 if role == "cloud" else 1)
+                assert migrate_application(db, role) == (3 if role == "cloud" else 1)
+                assert migrate_application(db, role) == (3 if role == "cloud" else 1)
             with db.transaction() as conn:
                 conn.execute(
                     "INSERT INTO local_agents(agent_id,name,model_id,created_at) VALUES ('agent-a','A','platform/model',1)"
@@ -85,3 +85,32 @@ def test_postgresql_schema_pairs_initialize_idempotently_and_reference_public_id
             if db is not None:
                 db.close()
             admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+def test_cloud_v2_identity_survives_model_ledger_upgrade(tmp_path: Path, monkeypatch):
+    from octop.infra.db import application_migrations
+
+    original = application_migrations._ROOT
+    old = tmp_path / "old-migrations"
+    (old / "cloud").mkdir(parents=True)
+    for path in (original / "cloud").glob("00[12]_*.sql"):
+        (old / "cloud" / path.name).write_bytes(path.read_bytes())
+    db = SqlitePool(tmp_path / "upgrade.db")
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(application_migrations, "_ROOT", old)
+            assert migrate_application(db, "cloud") == 2
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO cloud_users(username,password_hash,role) VALUES ('preserved','argon2-record','admin')"
+            )
+        assert migrate_application(db, "cloud") == 3
+        assert migrate_application(db, "cloud") == 3
+        with db.connect() as conn:
+            assert conn.execute("SELECT username,password_hash FROM cloud_users").fetchone()[:] == (
+                "preserved",
+                "argon2-record",
+            )
+            assert conn.execute("SELECT COUNT(*) FROM cloud_model_requests").fetchone()[0] == 0
+    finally:
+        db.close()

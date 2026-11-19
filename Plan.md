@@ -1,6 +1,6 @@
 # Octop 桌面 Agent 与云端管理改造计划
 
-> 日期：2026-11-19。状态：P0、P1、P2 已完成验收；当前停在 P3 之前。
+> 日期：2026-11-19。状态：P0、P1、P2、P3 已完成验收；当前停在 P4 之前。
 >
 > 本次修订采用「基于 octop-harness 建立新的云端与桌面应用层，选择性迁入 Octop 成熟能力」的路线。本文记录已确认的产品边界，并给出后续实现顺序。勾选项表示实现与验收均完成；尚未验收的探索性代码不计为完成。模块名、接口名和表名是设计建议，实施时结合现有代码确定，不代表已存在。
 
@@ -284,17 +284,31 @@ P2 验收记录（2026-11-19）：
 - 后端：最终 `make all` 通过，5971 passed、55 skipped；随后 `make lint typecheck` 与最终身份/CLI/i18n 专项（107 passed、10 skipped）通过。跳过项含无 PG 环境时的参数化用例，PG 实例下已单独实测；mypy 覆盖 715 个源文件。
 - 数据库：PostgreSQL 17 临时实例下，身份 + 迁移专项为 24 passed，覆盖 SQLite/PG 两种事务、MFA、并发绑定、撤销与本地账号隔离。云端-only 全新虚拟环境完成密码/MFA/恢复码/设备绑定/重启续期，未安装 Harness、Memory、Browser、Gateway 或 LangChain。
 - 联调：用 Node 执行 Electron 主进程云端会话客户端，连接两个真实 HTTP uvicorn 新应用，完成 MFA 登录 → 绑定 → sidecar 选择账号 → 续期 → 退出撤销。Electron `typecheck`、`test`（205 passed）和 `build` 通过；Dashboard `npx tsc -b`、`make build-frontend` 通过。安全存储测试使用注入 cipher 验证策略，完整 GUI/OS keychain 和原生安装器的跨平台手工验收仍在 P7。
-- 文档：[docs/cloud-identity.md](docs/cloud-identity.md) 记录启动、路由、凭证期限、IPC、隔离和离线退出语义；API 文档与 OpenAPI 的 summary/schema/Bearer 定义已核对。产品登录页面在 P6，P3 及后续阶段未开始。
+- 文档：[docs/cloud-identity.md](docs/cloud-identity.md) 记录启动、路由、凭证期限、IPC、隔离和离线退出语义；API 文档与 OpenAPI 的 summary/schema/Bearer 定义已核对。产品登录页面在 P6；P2 验收时 P3 及后续阶段未开始，当前 P3 进度见下文。
 
 ### P3：模型网关、额度与结算闭环
 
-- [ ] 在新云端服务中实现模型目录、授权、逻辑路由与供应商凭证存储，迁入适用的模型能力描述和用量口径，不依赖旧 Agent 的模型工厂。
-- [ ] 实现流式调用、工具调用、多模态及首期辅助模型接口，传播取消并保留最终用量信息。
-- [ ] 实现请求幂等、供应商尝试记录、原子预占、费用结算、释放与待核对状态。
-- [ ] 将新本地运行服务的主调用和辅助调用接入平台入口；生产配置只接受平台模型目录与短期授权，不迁入自带 Provider Key 的设置和直连路径。
-- [ ] 迁入适用的用量聚合逻辑，基于新账本向管理员和用户提供各自可见的费用结果。
+- [x] 在新云端服务中实现模型目录、授权、逻辑路由与供应商凭证存储，迁入适用的模型能力描述和用量口径，不依赖旧 Agent 的模型工厂。
+- [x] 实现流式调用、工具调用、多模态及首期辅助模型接口，传播取消并保留最终用量信息。
+- [x] 实现请求幂等、供应商尝试记录、原子预占、费用结算、释放与待核对状态。
+- [x] 将新本地运行服务的主调用和辅助调用接入平台入口；生产配置只接受平台模型目录与短期授权，不迁入自带 Provider Key 的设置和直连路径。
+- [x] 迁入适用的用量聚合逻辑，基于新账本向管理员和用户提供各自可见的费用结果。
 
 验收：使用可计数的供应商 stub 完成本地「模型 → 工具 → 模型」闭环；并发额度不超额，幂等重放不新增上游调用；断流、取消、未知结果和 failover 不丢账或重复结算。客户端无法越权指定模型或修改账本。
+
+P3 验收记录（2026-11-19）：
+
+- 云端：新增 `infra/models/`、独立 model repo 与 cloud v3 的 SQLite/PostgreSQL 双 SQL 迁移，接入新云端容器；P2 已可建立 v2 数据库，因此新增 003，另测 v2 身份记录升级后保持不变。不使用旧 Agent 模型工厂或全量服务容器，云端仍不导入 Harness、Memory、Browser 或 Gateway。
+- 管理与授权：管理员账号会话配置供应商、密封 Key、逻辑模型、不可变费率版本、路由、用户模型授权和绝对预算；目录只向用户暴露逻辑模型与能力。设备会话不能修改授权或账本。当前设备登记个人 Agent/thread/turn 的不可重挂关联，消费时验证所有权；正式平台 Agent/skills 发布、版本与分配仍由 P4 接入，不能把消费上下文登记当成平台资源授权。
+- 协议：支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 的 JSON/SSE、文本、图像请求、函数工具增量、usage 与取消，以及独立非流式 Embedding。三种生成协议均经实际两个 uvicorn 监听端口、真实 Harness 和可计数供应商 stub 跑通「模型 → 本地 read_file → 模型」。首期不声明 Bedrock、音视频、供应商托管工具或远端 Responses 会话；Anthropic 缓存仅默认/5 分钟 TTL。
+- 账本：逻辑 request、实际 attempt 与唯一 settlement 分开保存。服务端当前设备校验和预算预占共用事务；规范化请求摘要与稳定 request_id 防重复消费，重放返回 202 状态，不重放流。输入与输出上限用于保守预占；输入/缓存读/缓存写/输出分项互斥，reasoning 不重复收费；金额按整数 nano 计算，按不可变费率快照结算。
+- 未知消耗：仅配置为明确无费用的 HTTP 状态才释放并 failover，默认此列表为空。断流、取消、未知 HTTP/usage 或超出已配置模型用量上限时保留预算并转入 `reconciliation_required`；管理员凭供应商依据核对，保存核对人、依据和权威用量，重复核对不重复结算。180 秒 lease/30 秒心跳及恢复扫描覆盖进程中断；HTTP handler、供应商调用与账本清理各有生命周期，重复取消不会抛弃已开始的事务。完整校验 SSE 事件后才转发，分片的供应商错误内容也不会提前透出。
+- 本地：按账号装配平台目录和私有 loopback 模型中继，复用 Harness 的公开 factory/base_url/headers/session_header；SDK 禁止自动重试，输出上限按平台设置。每次模型 HTTP 调用生成独立 request_id，关联本地活动 turn，发送前取得原账号最新短期授权；云端 Token 不放进 SDK 配置。主调用及使用同一 factory 的内部辅助调用走同一网关；显式辅助入口支持 summary/title/memory/subagent/embedding 等 purpose，自动 Harness 调用统一标记 chat。退出、切换账号中断旧流；额度错误保持原 ErrorCode 返回桌面。
+- 费用查询：云端提供本人或管理员指定用户的预算、请求/attempt 状态和按模型/币种汇总的已结算费用；sidecar 提供仅当前账号的查询入口。首期不启用支付、充值或完整记忆/标题生成产品；默认没有供应商、费率、消费授权或预算，生产参数仍需部署方填写。
+- 后端验收：最终 `make all` 通过，6003 passed、82 skipped，Ruff/格式与 mypy（723 个源文件）通过。`uv run pytest tests/integration/test_platform_models.py tests/unit/models tests/unit/db/test_application_migrations.py -q -x --tb=short` 专项为 34 passed、28 skipped；全量跳过项按环境、平台及 Embedding 非流式合同处理。
+- 数据库验收：临时 PostgreSQL 17 实例下，`uv run pytest tests/integration/test_platform_models.py tests/integration/test_cloud_identity.py tests/unit/db/test_application_migrations.py tests/unit/models -q --tb=short` 为 81 passed、2 skipped；覆盖两种数据库的并发预占、幂等、费率快照、failover、核对、设备撤销、取消与账本恢复。两个跳过项为 Embedding 流式组合。测试 schema、容器和临时凭证均已清理。
+- 安装与界面边界：仅安装 cloud extra 的全新隔离环境，未安装四个执行库或 LangChain，实际验证模型调用、幂等重放与结算。Dashboard `npx tsc -b`、`make build-frontend` 通过；未修改 Electron 源码。Scalar HTML 及 OpenAPI summary、类型、鉴权与原生 JSON/SSE 响应定义已检查；本次 Playwright driver 未就绪，未完成浏览器渲染抽查。完整产品 GUI、OS keychain 和各平台原生安装器仍在 P7 验收范围内。
+- 文档与暂停点：[docs/platform-models.md](docs/platform-models.md) 记录配置顺序、协议矩阵、金额单位、保守预占、异常结算、接口与桌面接入限制；P2 文档与合同已同步更新。本轮停在 P4 之前，不提前实施资源发布/安装或 P5 同步；登录、模型管理及费用产品页面仍在 P6 接入。
 
 ### P4：Agent/skills 发布、分配与个人资源
 

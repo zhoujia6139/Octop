@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
+
 from octop.application_config import CloudSettings
+from octop.infra.crypto.fernet import PURPOSE_PROVIDER, get_fernet
 from octop.infra.db.application_migrations import migrate_application
 from octop.infra.db.pool import DatabasePool, PostgresPool, SqlitePool
 from octop.infra.db.repos.cloud_identity import CloudIdentityRepo
+from octop.infra.db.repos.cloud_models import CloudModelRepo
 from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.identity.service import CloudIdentity
+from octop.infra.models.gateway import ModelGateway
+from octop.infra.models.ledger import ModelLedger
 from octop.infra.utils.ulid import new_ulid
 
 
 class CloudApplication:
-    def __init__(self, settings: CloudSettings) -> None:
+    def __init__(
+        self, settings: CloudSettings, *, provider_transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
         self.settings = settings
+        self._provider_transport = provider_transport
+        self.models: ModelGateway | None = None
         self.db: DatabasePool | None = None
         self.schema_version = 0
         self.identity: CloudIdentity | None = None
@@ -35,6 +45,12 @@ class CloudApplication:
             self.identity = CloudIdentity(
                 repo, SecretRepo(db), cloud_id=cloud_id, timezone=self.settings.default_timezone
             )
+            self.models = ModelGateway(
+                ModelLedger(
+                    CloudModelRepo(db), self.identity, get_fernet(SecretRepo(db), PURPOSE_PROVIDER)
+                ),
+                transport=self._provider_transport,
+            )
             return db, version
         except BaseException:
             db.close()
@@ -45,9 +61,14 @@ class CloudApplication:
             self.db, self.schema_version = await asyncio.get_running_loop().run_in_executor(
                 None, self._open
             )
+            assert self.models is not None
+            await self.models.start()
 
     async def close(self) -> None:
         if self.db is not None:
+            if self.models:
+                await self.models.close()
+                self.models = None
             self.identity = None
             db, self.db = self.db, None
             await asyncio.get_running_loop().run_in_executor(None, db.close)

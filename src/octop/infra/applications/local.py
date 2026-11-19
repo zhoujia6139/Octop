@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from octop_harness import HarnessAgent
     from octop_harness.llm.factory import ChatModelFactory
 
+    from octop.infra.applications.local_models import LocalModels
+
 
 class LocalApplication:
     """No Gateway, GlobalProcessor, old AgentManager or cloud credential store.
@@ -37,12 +39,18 @@ class LocalApplication:
     """
 
     def __init__(
-        self, settings: LocalSettings, *, model_factory: ChatModelFactory | None = None
+        self,
+        settings: LocalSettings,
+        *,
+        model_factory: ChatModelFactory | None = None,
+        model_platform: LocalModels | None = None,
     ) -> None:
         self.settings = settings
         self.services: LocalServices | None = None
         self.schema_version = 0
         self._model_factory = model_factory
+        self.model_platform = model_platform
+        self.model_turns: dict[str, tuple[str, str]] = {}
         self._agents: dict[str, HarnessAgent] = {}
         self._agent_lock = asyncio.Lock()
         self._active: dict[str, asyncio.Task[Any]] = {}
@@ -85,7 +93,10 @@ class LocalApplication:
             )
             if row is None:
                 raise OctopError.localized(ErrorCode.AGENT_NOT_FOUND)
-            if self._model_factory is None:
+            factory = self._model_factory
+            if self.model_platform:
+                factory = await self.model_platform.factory(agent_id)
+            if factory is None:
                 raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
             from octop_harness import HarnessAgent, HarnessAgentConfig
 
@@ -94,7 +105,7 @@ class LocalApplication:
                 name=row.name,
                 workspace_dir=workspace,
                 system_files_path=".octop",
-                providers=self._model_factory.provider_configs(),
+                providers=factory.provider_configs(),
                 default_model=row.model_id,
                 system_prompt=row.system_prompt,
                 backend={"type": "local_shell", "root_dir": str(workspace), "virtual_mode": False},
@@ -110,7 +121,7 @@ class LocalApplication:
             # Graph compilation and workspace initialization perform blocking I/O.
             initialized = asyncio.get_running_loop().run_in_executor(
                 None,
-                lambda: HarnessAgent(config, model_factory=self._model_factory, agent_id=agent_id),
+                lambda: HarnessAgent(config, model_factory=factory, agent_id=agent_id),
             )
             try:
                 agent = await asyncio.shield(initialized)
@@ -122,12 +133,15 @@ class LocalApplication:
             return agent
 
     async def create_agent(self, body: LocalAgentInput) -> LocalAgentView:
-        if self._model_factory is None:
+        if self.model_platform:
+            await self.model_platform.validate_model(body.model_id)
+        elif self._model_factory:
+            try:
+                self._model_factory.resolve_ref(body.model_id)
+            except (KeyError, ValueError) as exc:
+                raise OctopError.localized(ErrorCode.RESOURCE_NOT_ALLOWED) from exc
+        else:
             raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
-        try:
-            self._model_factory.resolve_ref(body.model_id)
-        except (KeyError, ValueError) as exc:
-            raise OctopError.localized(ErrorCode.RESOURCE_NOT_ALLOWED) from exc
         agent_id = new_ulid()
         await asyncio.get_running_loop().run_in_executor(
             None,
@@ -151,6 +165,14 @@ class LocalApplication:
             None, storage.threads.create, thread_id, agent_id
         )
         return ThreadView(thread_id=thread_id, agent_id=agent_id)
+
+    async def validate_model_context(self, agent_id: str, thread_id: str, turn_id: str) -> None:
+        storage = self._storage()
+        loop = asyncio.get_running_loop()
+        if not await loop.run_in_executor(
+            None, storage.threads.belongs_to, thread_id, agent_id
+        ) or not await loop.run_in_executor(None, storage.turns.belongs_to, turn_id, thread_id):
+            raise OctopError.localized(ErrorCode.NOT_FOUND)
 
     async def cancel(self, thread_id: str) -> TurnEvent | None:
         if task := self._active.get(thread_id):
@@ -229,6 +251,7 @@ class LocalApplication:
                     None, storage.turns.create, turn_id, thread_id
                 )
             created = True
+            self.model_turns[thread_id] = (agent_id, turn_id)
             status = TurnStatus.COMPLETED
             yield event("turn.started", {})
             async with aclosing(source) as chunks:
@@ -243,6 +266,15 @@ class LocalApplication:
         except GeneratorExit:
             status = TurnStatus.INTERRUPTED
             raise
+        except Exception as exc:
+            status = TurnStatus.FAILED
+            if (
+                self.model_platform
+                and not isinstance(exc, OctopError)
+                and (platform_error := self.model_platform.error(exc))
+            ):
+                raise platform_error from exc
+            raise
         except BaseException:
             status = TurnStatus.FAILED
             raise
@@ -254,6 +286,7 @@ class LocalApplication:
                     )
                 )
             self._active.pop(thread_id, None)
+            self.model_turns.pop(thread_id, None)
         terminal = event("turn.status", {"status": status.value})
         if status == TurnStatus.AWAITING_APPROVAL:
             self._pending[thread_id] = (turn_id, sequence)
@@ -269,6 +302,8 @@ class LocalApplication:
             results = await asyncio.gather(
                 *(agent.aclose() for agent in self._agents.values()), return_exceptions=True
             )
+            if self.model_platform:
+                await self.model_platform.close()
             if close_model_factory and self._model_factory is not None:
                 await self._model_factory.aclose()
             for result in results:

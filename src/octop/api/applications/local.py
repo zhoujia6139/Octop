@@ -10,9 +10,10 @@ from contextlib import aclosing, asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from starlette.background import BackgroundTask
 
 from octop.api.applications.common import configure_http
 from octop.application_config import LocalSettings
@@ -26,6 +27,16 @@ from octop.infra.applications.contracts import (
 from octop.infra.applications.local_accounts import LocalAccounts
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.identity.contracts import IdentityView, TokenView
+from octop.infra.models.contracts import (
+    BudgetView,
+    ModelContext,
+    ModelInput,
+    ModelView,
+    Purpose,
+    RequestView,
+    UsageSummary,
+)
+from octop.infra.models.protocols import PATHS
 from octop.infra.utils.locale import resolve_request_locale
 
 if TYPE_CHECKING:
@@ -36,6 +47,13 @@ logger = logging.getLogger(__name__)
 
 class CloudConfig(BaseModel):
     cloud_url: str | None
+
+
+class AuxiliaryModelInput(ModelInput):
+    context: ModelContext
+    purpose: Purpose
+    model_id: str
+    payload: dict[str, Any]
 
 
 class ApprovalDecision(BaseModel):
@@ -99,6 +117,17 @@ def create_local_app(
     async def authenticate(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        if request.url.path.startswith("/api/platform/"):
+            runtime = accounts.runtime
+            platform = runtime.model_platform if runtime else None
+            token = request.headers.get("authorization", "")
+            # Anthropic SDK authenticates via x-api-key rather than Bearer.
+            incoming = request.headers.get("x-api-key") or token.removeprefix("Bearer ")
+            if not platform or not hmac.compare_digest(
+                incoming.encode(), platform.api_token.encode()
+            ):
+                return Response(status_code=401)
+            return await call_next(request)
         if request.url.path != "/api/health" and not authenticated(
             request.headers.get("authorization", "")
         ):
@@ -133,7 +162,12 @@ def create_local_app(
         tags=["auth"],
         summary="Verify short-lived device access and select its local account",
     )
-    async def attach_cloud(body: TokenView) -> IdentityView:
+    async def attach_cloud(body: TokenView, request: Request) -> IdentityView:
+        # ASGI server address is supplied by uvicorn, unlike the caller's Host.
+        server = request.scope.get("server")
+        if server and isinstance(server[1], int) and 0 < server[1] < 65536:
+            host = "[::1]" if settings.bind_host == "::1" else "127.0.0.1"
+            accounts.model_origin = f"http://{host}:{server[1]}"
         identity = await accounts.attach(body)
         app.state.local = accounts.runtime
         return identity
@@ -157,6 +191,117 @@ def create_local_app(
         await accounts.detach()
         app.state.local = None
         return Response(status_code=204)
+
+    @app.get(
+        "/api/models",
+        response_model=list[ModelView],
+        tags=["models"],
+        summary="List models authorized for this desktop account",
+    )
+    async def models() -> list[ModelView]:
+        platform = accounts.require_runtime().model_platform
+        if not platform:
+            raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
+        return await platform.catalog()
+
+    @app.get(
+        "/api/usage/budgets",
+        response_model=list[BudgetView],
+        tags=["usage"],
+        summary="Read this desktop account's authoritative cloud budgets",
+    )
+    async def usage_budgets() -> list[BudgetView]:
+        platform = accounts.require_runtime().model_platform
+        if not platform:
+            raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
+        return await platform.budgets()
+
+    @app.get(
+        "/api/usage/requests",
+        response_model=list[RequestView],
+        tags=["usage"],
+        summary="Read this desktop account's model attempts and settlement states",
+    )
+    async def usage_requests(limit: int = Query(default=100, ge=1, le=500)) -> list[RequestView]:
+        platform = accounts.require_runtime().model_platform
+        if not platform:
+            raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
+        return await platform.requests(limit)
+
+    @app.get(
+        "/api/usage/summary",
+        response_model=list[UsageSummary],
+        tags=["usage"],
+        summary="Read this desktop account's settled model costs",
+    )
+    async def usage_summary(
+        since: int = Query(default=0, ge=0), until: int = Query(default=2**62, ge=1)
+    ) -> list[UsageSummary]:
+        platform = accounts.require_runtime().model_platform
+        if not platform:
+            raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
+        return await platform.summary(since, until)
+
+    async def native_response(result: Any) -> Response:
+        media = result.response.headers.get("content-type", "application/json")
+        return StreamingResponse(
+            result.chunks(), media_type=media, background=BackgroundTask(result.close)
+        )
+
+    @app.post("/api/platform/chat/completions", include_in_schema=False)
+    @app.post("/api/platform/responses", include_in_schema=False)
+    @app.post("/api/platform/v1/messages", include_in_schema=False)
+    async def platform_relay(request: Request) -> Response:
+        platform = accounts.require_runtime().model_platform
+        if not platform:
+            raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
+        path = request.url.path.removeprefix("/api/platform")
+        if path == "/v1/messages":
+            path = "/messages"
+        result = await platform.relay(
+            path,
+            await request.json(),
+            request.headers.get("x-octop-agent-id", ""),
+            request.headers.get("x-octop-thread-id", ""),
+        )
+        return await native_response(result)
+
+    @app.post(
+        "/api/models/auxiliary",
+        tags=["models"],
+        summary="Call an auxiliary platform model in an owned local turn",
+        description="Routes summary, title, memory, subagent and embedding calls through the same device authorization and ledger. Does not enable those product features.",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "Native model JSON or SSE",
+                "content": {
+                    "application/json": {
+                        "schema": {"type": "object", "additionalProperties": True}
+                    },
+                    "text/event-stream": {"schema": {"type": "string"}},
+                },
+            }
+        },
+    )
+    async def auxiliary(body: AuxiliaryModelInput) -> Response:
+        runtime = accounts.require_runtime()
+        platform = runtime.model_platform
+        if not platform:
+            raise OctopError.localized(ErrorCode.PLATFORM_MODEL_UNAVAILABLE)
+        await runtime.validate_model_context(
+            body.context.agent_id, body.context.thread_id, body.context.turn_id
+        )
+        model = next((m for m in await platform.catalog() if m.model_id == body.model_id), None)
+        if model is None:
+            raise OctopError.localized(ErrorCode.RESOURCE_NOT_ALLOWED)
+        result = await platform.open(
+            path=PATHS[model.protocol],
+            payload={**body.payload, "model": body.model_id},
+            context=body.context,
+            purpose=body.purpose,
+        )
+        return await native_response(result)
 
     @app.get(
         "/api/agents",

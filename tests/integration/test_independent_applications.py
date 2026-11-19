@@ -56,7 +56,7 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
                     "protocol_version": 1,
                     "role": "cloud",
                     "ok": True,
-                    "schema_version": 2,
+                    "schema_version": 3,
                 }
                 paths = (await client.get("/api/openapi.json")).json()["paths"]
                 assert "/api/auth/login" in paths
@@ -69,6 +69,17 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
                     for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
                 assert tables == {
+                    "cloud_model_providers",
+                    "cloud_model_rates",
+                    "cloud_models",
+                    "cloud_model_grants",
+                    "cloud_model_budgets",
+                    "cloud_model_agents",
+                    "cloud_model_threads",
+                    "cloud_model_turns",
+                    "cloud_model_requests",
+                    "cloud_model_attempts",
+                    "cloud_model_settlements",
                     "cloud_settings",
                     "cloud_schema_version",
                     "cloud_users",

@@ -45,6 +45,7 @@ class LocalAccounts:
         self._client = httpx.AsyncClient(
             transport=cloud_transport, trust_env=False, follow_redirects=False, timeout=10
         )
+        self.model_origin: str | None = None
         self.started = False
 
     async def start(self) -> None:
@@ -114,7 +115,22 @@ class LocalAccounts:
                         "default_timezone": verified.timezone,
                     }
                 )
-                runtime = LocalApplication(scoped, model_factory=self._model_factory)
+                platform = None
+                if not self._test_sandbox and self.model_origin and self.settings.cloud_url:
+                    from octop.infra.applications.local_models import LocalModels
+
+                    platform = LocalModels(
+                        client=self._client,
+                        cloud_url=self.settings.cloud_url,
+                        local_origin=self.model_origin,
+                        identity=verified,
+                        access=self.device_access,
+                    )
+                runtime = LocalApplication(
+                    scoped, model_factory=self._model_factory, model_platform=platform
+                )
+                if platform:
+                    platform.runtime = runtime
                 await runtime.start()
                 self.runtime = runtime
             self.identity = verified
