@@ -10,10 +10,11 @@ from typing import Any, Protocol
 
 from octop_harness.backends.utils import BackendOperationNotSupportedError
 
-from octop.infra.errors import ErrorCode, OctopError
-from octop.infra.gateway.media.attachment_hints import sniff_image_media_type
+from octop.infra.avatars import MAX_AVATAR_BYTES as MAX_AVATAR_BYTES
+from octop.infra.avatars import sniff_avatar_media_type as sniff_avatar_media_type
+from octop.infra.errors import OctopError
+from octop.infra.utils.image import sniff_image_media_type
 
-MAX_AVATAR_BYTES = 5 * 1024 * 1024
 AVATAR_DIR = ".octop"
 _AVATAR_NAMES: tuple[str, ...] = (
     "avatar.png",
@@ -92,18 +93,6 @@ def display_agent_icon_url(
     if version <= 0:
         return local
     return f"{local}?v={version}"
-
-
-def sniff_avatar_media_type(data: bytes) -> str:
-    """Return a sniffed image media type or raise ``AVATAR_INVALID``."""
-    if not data:
-        raise OctopError(ErrorCode.AVATAR_INVALID, "avatar file is empty")
-    if len(data) > MAX_AVATAR_BYTES:
-        raise OctopError(ErrorCode.AVATAR_TOO_LARGE, "avatar exceeds 5 MiB")
-    media_type = sniff_image_media_type(data)
-    if media_type is None:
-        raise OctopError(ErrorCode.AVATAR_INVALID, "avatar content is not a valid image")
-    return media_type
 
 
 def avatar_relpath_for_media(media_type: str) -> str:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-from langchain_core.exceptions import ModelAuthenticationError, ModelPermissionDeniedError
-
 from octop.i18n.loader import lookup, tr
 from octop.infra.utils.locale import Locale
 
@@ -284,6 +282,8 @@ def format_stream_error(exc: BaseException | str, locale: str | Locale = "en") -
     Tool / path failures (e.g. ``send_file_to_user`` missing file) pass through so
     the UI does not mislabel them as a model-call outage.
     """
+    from langchain_core.exceptions import ModelAuthenticationError, ModelPermissionDeniedError
+
     current = exc if isinstance(exc, BaseException) else None
     seen: set[int] = set()
     while current is not None and id(current) not in seen:

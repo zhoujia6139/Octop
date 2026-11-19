@@ -10,7 +10,7 @@ import re
 
 from fastapi import Response
 
-from octop.infra.agents.experts.avatar import sniff_avatar_media_type
+from octop.infra.avatars import sniff_avatar_media_type
 from octop.infra.db.repos.profile_avatars import ProfileAvatarRepo
 from octop.infra.db.repos.settings import SettingsRepo
 from octop.infra.errors import ErrorCode, OctopError

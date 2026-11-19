@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -1524,6 +1524,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
 ]
 
+[package.optional-dependencies]
+socks = [
+    { name = "socksio" },
+]
+
 [[package]]
 name = "httpx-sse"
 version = "0.4.3"
@@ -2592,14 +2597,85 @@ name = "octop"
 version = "1.0.3b7"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
+    { name = "fastapi" },
+    { name = "httpx", extra = ["socks"] },
+    { name = "pydantic" },
+    { name = "rich" },
+    { name = "scalar-fastapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+browser = [
+    { name = "playwright" },
+]
+cloud = [
+    { name = "psycopg", extra = ["binary", "pool"] },
+]
+desktop = [
+    { name = "mss" },
+    { name = "pynput" },
+]
+dev = [
     { name = "acme" },
     { name = "apscheduler" },
     { name = "argon2-cffi" },
     { name = "boto3" },
-    { name = "click" },
+    { name = "build" },
     { name = "cryptography" },
     { name = "edge-tts" },
-    { name = "fastapi" },
+    { name = "firecrawl-anydoc" },
+    { name = "httpx" },
+    { name = "josepy" },
+    { name = "langchain-core" },
+    { name = "langgraph-checkpoint-postgres" },
+    { name = "lark-oapi" },
+    { name = "ldap3" },
+    { name = "mcp" },
+    { name = "mypy" },
+    { name = "octop-browser" },
+    { name = "octop-gateway" },
+    { name = "octop-harness", extra = ["all"] },
+    { name = "octop-memory" },
+    { name = "openpyxl" },
+    { name = "pillow" },
+    { name = "playwright" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "pyjwt" },
+    { name = "pyotp" },
+    { name = "pypdf" },
+    { name = "pypinyin" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-testmon" },
+    { name = "pytest-xdist" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "python-socks" },
+    { name = "questionary" },
+    { name = "ruff" },
+    { name = "segno" },
+    { name = "tencentcloud-sdk-python" },
+    { name = "webauthn" },
+    { name = "websockets" },
+    { name = "xlrd" },
+    { name = "xlwt" },
+]
+knowledge-ocr = [
+    { name = "onnxruntime" },
+    { name = "pymupdf" },
+    { name = "rapidocr" },
+    { name = "shapely" },
+]
+legacy-runtime = [
+    { name = "acme" },
+    { name = "apscheduler" },
+    { name = "argon2-cffi" },
+    { name = "boto3" },
+    { name = "cryptography" },
+    { name = "edge-tts" },
     { name = "firecrawl-anydoc" },
     { name = "josepy" },
     { name = "langchain-core" },
@@ -2615,7 +2691,6 @@ dependencies = [
     { name = "pillow" },
     { name = "playwright" },
     { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
     { name = "pyjwt" },
     { name = "pyotp" },
     { name = "pypdf" },
@@ -2624,45 +2699,21 @@ dependencies = [
     { name = "python-pptx" },
     { name = "python-socks" },
     { name = "questionary" },
-    { name = "rich" },
-    { name = "scalar-fastapi" },
     { name = "segno" },
     { name = "tencentcloud-sdk-python" },
-    { name = "uvicorn", extra = ["standard"] },
     { name = "webauthn" },
     { name = "websockets" },
     { name = "xlrd" },
 ]
-
-[package.optional-dependencies]
-browser = [
-    { name = "playwright" },
-]
-desktop = [
-    { name = "mss" },
-    { name = "pynput" },
-]
-dev = [
-    { name = "build" },
-    { name = "httpx" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-testmon" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "xlwt" },
-]
-knowledge-ocr = [
-    { name = "onnxruntime" },
-    { name = "pymupdf" },
-    { name = "rapidocr" },
-    { name = "shapely" },
-]
 local-embedding = [
     { name = "fastembed" },
     { name = "huggingface-hub" },
+]
+local-runtime = [
+    { name = "octop-browser" },
+    { name = "octop-harness", extra = ["all"] },
+    { name = "octop-memory" },
+    { name = "python-socks" },
 ]
 tos = [
     { name = "tos" },
@@ -2684,68 +2735,75 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "acme", specifier = ">=5.6.0" },
-    { name = "apscheduler", specifier = ">=3.10,<4" },
-    { name = "argon2-cffi", specifier = ">=23.1" },
-    { name = "boto3", specifier = ">=1.40.61" },
+    { name = "acme", marker = "extra == 'legacy-runtime'", specifier = ">=5.6.0" },
+    { name = "apscheduler", marker = "extra == 'legacy-runtime'", specifier = ">=3.10,<4" },
+    { name = "argon2-cffi", marker = "extra == 'legacy-runtime'", specifier = ">=23.1" },
+    { name = "boto3", marker = "extra == 'legacy-runtime'", specifier = ">=1.40.61" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "click", specifier = ">=8.1" },
-    { name = "cryptography", specifier = ">=41" },
-    { name = "edge-tts", specifier = ">=6.1" },
+    { name = "cryptography", marker = "extra == 'legacy-runtime'", specifier = ">=41" },
+    { name = "edge-tts", marker = "extra == 'legacy-runtime'", specifier = ">=6.1" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "fastembed", marker = "extra == 'local-embedding'", specifier = ">=0.4" },
-    { name = "firecrawl-anydoc", specifier = ">=0.2.4" },
+    { name = "firecrawl-anydoc", marker = "extra == 'legacy-runtime'", specifier = ">=0.2.4" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'local-embedding'", specifier = ">=0.20" },
-    { name = "josepy", specifier = ">=2.2.0" },
-    { name = "langchain-core", specifier = ">=1.4.8" },
-    { name = "langgraph-checkpoint-postgres", specifier = ">=2.0" },
-    { name = "lark-oapi", specifier = ">=1.7.3" },
-    { name = "ldap3", specifier = ">=2.9.1" },
-    { name = "mcp", specifier = ">=1.9,<2" },
+    { name = "josepy", marker = "extra == 'legacy-runtime'", specifier = ">=2.2.0" },
+    { name = "langchain-core", marker = "extra == 'legacy-runtime'", specifier = ">=1.4.8" },
+    { name = "langgraph-checkpoint-postgres", marker = "extra == 'legacy-runtime'", specifier = ">=2.0" },
+    { name = "lark-oapi", marker = "extra == 'legacy-runtime'", specifier = ">=1.7.3" },
+    { name = "ldap3", marker = "extra == 'legacy-runtime'", specifier = ">=2.9.1" },
+    { name = "mcp", marker = "extra == 'legacy-runtime'", specifier = ">=1.9,<2" },
     { name = "mss", marker = "extra == 'desktop'", specifier = ">=9.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "octop-browser", specifier = ">=1.0.0" },
-    { name = "octop-gateway", specifier = ">=1.0.4" },
-    { name = "octop-harness", extras = ["all"], specifier = ">=1.0.11" },
-    { name = "octop-memory", specifier = ">=1.0.5" },
+    { name = "octop", extras = ["legacy-runtime", "local-runtime", "cloud"], marker = "extra == 'dev'" },
+    { name = "octop-browser", marker = "extra == 'legacy-runtime'", specifier = ">=1.0.0" },
+    { name = "octop-browser", marker = "extra == 'local-runtime'", specifier = ">=1.0.0" },
+    { name = "octop-gateway", marker = "extra == 'legacy-runtime'", specifier = ">=1.0.4" },
+    { name = "octop-harness", extras = ["all"], marker = "extra == 'legacy-runtime'", specifier = ">=1.0.11" },
+    { name = "octop-harness", extras = ["all"], marker = "extra == 'local-runtime'", specifier = ">=1.0.11" },
+    { name = "octop-memory", marker = "extra == 'legacy-runtime'", specifier = ">=1.0.5" },
+    { name = "octop-memory", marker = "extra == 'local-runtime'", specifier = ">=1.0.5" },
     { name = "onnxruntime", marker = "extra == 'knowledge-ocr'", specifier = ">=1.17" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pillow", specifier = ">=13.0.0" },
-    { name = "playwright", specifier = ">=1.40" },
+    { name = "openpyxl", marker = "extra == 'legacy-runtime'", specifier = ">=3.1" },
+    { name = "pillow", marker = "extra == 'legacy-runtime'", specifier = ">=13.0.0" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
-    { name = "pydantic", specifier = ">=2.6,<2.14" },
-    { name = "pyjwt", specifier = ">=2.8" },
+    { name = "playwright", marker = "extra == 'legacy-runtime'", specifier = ">=1.40" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'legacy-runtime'", specifier = ">=3.2" },
+    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'cloud'", specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.12,<2.14" },
+    { name = "pyjwt", marker = "extra == 'legacy-runtime'", specifier = ">=2.8" },
     { name = "pymupdf", marker = "extra == 'knowledge-ocr'", specifier = ">=1.24" },
     { name = "pynput", marker = "extra == 'desktop'", specifier = ">=1.7" },
-    { name = "pyotp", specifier = ">=2.10.0" },
-    { name = "pypdf", specifier = ">=5.0" },
-    { name = "pypinyin", specifier = ">=0.53" },
+    { name = "pyotp", marker = "extra == 'legacy-runtime'", specifier = ">=2.10.0" },
+    { name = "pypdf", marker = "extra == 'legacy-runtime'", specifier = ">=5.0" },
+    { name = "pypinyin", marker = "extra == 'legacy-runtime'", specifier = ">=0.53" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1" },
     { name = "pytest-testmon", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6" },
-    { name = "python-docx", specifier = ">=1.2.0" },
-    { name = "python-pptx", specifier = ">=1.0" },
-    { name = "python-socks", specifier = ">=2.4" },
-    { name = "questionary", specifier = ">=2.0" },
+    { name = "python-docx", marker = "extra == 'legacy-runtime'", specifier = ">=1.2.0" },
+    { name = "python-pptx", marker = "extra == 'legacy-runtime'", specifier = ">=1.0" },
+    { name = "python-socks", marker = "extra == 'legacy-runtime'", specifier = ">=2.4" },
+    { name = "python-socks", marker = "extra == 'local-runtime'", specifier = ">=2.4" },
+    { name = "questionary", marker = "extra == 'legacy-runtime'", specifier = ">=2.0" },
     { name = "rapidocr", marker = "extra == 'knowledge-ocr'", specifier = ">=3.4,<4" },
     { name = "rich", specifier = ">=13.7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "scalar-fastapi", specifier = ">=1.0" },
-    { name = "segno", specifier = ">=1.6" },
+    { name = "segno", marker = "extra == 'legacy-runtime'", specifier = ">=1.6" },
     { name = "shapely", marker = "extra == 'knowledge-ocr'", specifier = ">=2.2.0" },
-    { name = "tencentcloud-sdk-python", specifier = ">=3.1.166" },
+    { name = "tencentcloud-sdk-python", marker = "extra == 'legacy-runtime'", specifier = ">=3.1.166" },
     { name = "tos", marker = "extra == 'tos'", specifier = ">=2.9,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27" },
-    { name = "webauthn", specifier = ">=3.0.1" },
-    { name = "websockets", specifier = ">=13.0" },
-    { name = "xlrd", specifier = ">=2.0.1" },
+    { name = "webauthn", marker = "extra == 'legacy-runtime'", specifier = ">=3.0.1" },
+    { name = "websockets", marker = "extra == 'legacy-runtime'", specifier = ">=13.0" },
+    { name = "xlrd", marker = "extra == 'legacy-runtime'", specifier = ">=2.0.1" },
     { name = "xlwt", marker = "extra == 'dev'", specifier = ">=1.3" },
 ]
-provides-extras = ["dev", "browser", "tos", "desktop", "local-embedding", "knowledge-ocr"]
+provides-extras = ["cloud", "local-runtime", "legacy-runtime", "dev", "browser", "tos", "desktop", "local-embedding", "knowledge-ocr"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4647,6 +4705,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
+]
+
+[[package]]
+name = "socksio"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/5c/48a7d9495be3d1c651198fd99dbb6ce190e2274d0f28b9051307bdec6b85/socksio-1.0.0.tar.gz", hash = "sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac", size = 19055, upload-time = "2020-04-17T15:50:34.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/c3/6eeb6034408dac0fa653d126c9204ade96b819c936e136c5e8a6897eee9c/socksio-1.0.0-py3-none-any.whl", hash = "sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3", size = 12763, upload-time = "2020-04-17T15:50:31.878Z" },
 ]
 
 [[package]]

@@ -3,6 +3,17 @@
 All desktop-client code lives here. This is **not** `src/octop/infra/control/desktop`
 (remote desktop streaming).
 
+The independent backend work is tracked in [`../Plan.md`](../Plan.md) and
+[`../docs/desktop-cloud-contracts.md`](../docs/desktop-cloud-contracts.md).
+During P1, `pnpm dev -- --local-runtime` explicitly launches the new local
+application through `run --role desktop`; its per-launch local API credential
+is generated in the main process. The existing UI still uses its old API and
+is migrated in P6. The new backend currently supports health, local instance
+and thread creation, and streaming/approval/cancellation; production model
+access stays unavailable until the platform gateway is connected in P3.
+Portable dependency export uses `local-runtime`, independently of the cloud
+extra. Native installers with the migrated product UI are validated in P7.
+
 | Path | Role |
 |------|------|
 | [`src/`](src/) | Electron shell — owns the Python sidecar, not the business logic |

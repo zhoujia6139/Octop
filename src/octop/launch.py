@@ -6,10 +6,10 @@ import asyncio
 import logging
 import sys
 from contextlib import suppress
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from octop.infra.desktop import desktop_shell_enabled
-from octop.infra.server import OctopServer
 from octop.infra.utils.accept_errors import coalesce_accept_errors
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # application heartbeat still detects a half-open link.
 _WS_PING_INTERVAL = 20.0
 _WS_PING_TIMEOUT: float | None = None
+_WS_MAX_BYTES = 32 * 1024 * 1024
 
 
 def _ensure_linux_bubblewrap() -> None:
@@ -66,6 +67,7 @@ async def _serve(server: Any) -> None:
 
 async def run_foreground(
     *,
+    role: Literal["cloud", "desktop"] | None = None,
     host: str | None,
     port: int | None,
     reload: bool,
@@ -75,17 +77,31 @@ async def run_foreground(
     ssl_keyfile: str | None,
 ) -> None:
     """Boot the domain server, serve the HTTP API, then shut down cleanly."""
+    if role is not None:
+        if reload or workers != 1:
+            raise ValueError("independent applications currently use one worker without reload")
+        await run_application(
+            "cloud" if role == "cloud" else "local",
+            host=host,
+            port=port,
+            log_level=log_level,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+        )
+        return
     import uvicorn
 
     from octop.api.app import build_app
-    from octop.infra.bridge.transport import BRIDGE_WS_MAX_BYTES
+    from octop.infra.server import OctopServer
     from octop.infra.setup.tls.http_companion import build_http_companion_app
     from octop.infra.setup.tls.listeners import build_listen_plan
     from octop.infra.setup.tls.store import resolve_tls_paths
 
+    # Default product entry switches in P6 after the UI has its new API client.
+    selected_role = "desktop"
     srv = OctopServer()
     await srv.start()
-    bwrap_task = _schedule_linux_bubblewrap_ensure()
+    bwrap_task = _schedule_linux_bubblewrap_ensure() if selected_role == "desktop" else None
     # Greenfield deferral leaves services unset until /setup/database binds.
     cfg = srv.services.config if srv.services is not None else srv.config
     assert cfg is not None
@@ -129,7 +145,7 @@ async def run_foreground(
             reload=False,
             ssl_certfile=plan.ssl_certfile,
             ssl_keyfile=plan.ssl_keyfile,
-            ws_max_size=BRIDGE_WS_MAX_BYTES,
+            ws_max_size=_WS_MAX_BYTES,
             ws_ping_interval=_WS_PING_INTERVAL,
             ws_ping_timeout=_WS_PING_TIMEOUT,
         )
@@ -161,21 +177,25 @@ async def run_foreground(
             reload=reload,
             ssl_certfile=plan.ssl_certfile,
             ssl_keyfile=plan.ssl_keyfile,
-            ws_max_size=BRIDGE_WS_MAX_BYTES,
+            ws_max_size=_WS_MAX_BYTES,
             ws_ping_interval=_WS_PING_INTERVAL,
             ws_ping_timeout=_WS_PING_TIMEOUT,
         )
         servers.append(uvicorn.Server(single_config))
 
-    from octop.infra.agents.memory.slim_control import MemorySlimControl
+    memory_control = None
+    if selected_role == "desktop":
+        from octop.infra.agents.memory.slim_control import MemorySlimControl
 
-    memory_control = MemorySlimControl(srv)
+        memory_control = MemorySlimControl(srv)
     with coalesce_accept_errors(asyncio.get_running_loop()):
         try:
-            await memory_control.start()
+            if memory_control is not None:
+                await memory_control.start()
             await asyncio.gather(*(_serve(s) for s in servers))
         finally:
-            await memory_control.close()
+            if memory_control is not None:
+                await memory_control.close()
             await _cancel_background_task(bwrap_task)
             await srv.stop()
 
@@ -183,3 +203,50 @@ async def run_foreground(
 def run_foreground_blocking(**kwargs: Any) -> None:
     """Sync entry for Click commands and tests."""
     asyncio.run(run_foreground(**kwargs))
+
+
+async def run_application(
+    role: Literal["cloud", "local"],
+    *,
+    home: Path | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    log_level: str | None = None,
+    ssl_certfile: str | None = None,
+    ssl_keyfile: str | None = None,
+) -> None:
+    """Run one independent factory; uvicorn owns its ASGI lifespan and cleanup."""
+    import uvicorn
+
+    from octop.application_config import CloudSettings, LocalSettings, application_home
+
+    settings_type = CloudSettings if role == "cloud" else LocalSettings
+    settings = await asyncio.get_running_loop().run_in_executor(
+        None, settings_type.load, home or application_home(role)
+    )
+    updates = {
+        key: value for key, value in {"bind_host": host, "port": port}.items() if value is not None
+    }
+    settings = settings_type.model_validate({**settings.model_dump(), **updates})
+    if isinstance(settings, CloudSettings):
+        from octop.api.applications.cloud import create_cloud_app
+
+        app = create_cloud_app(settings)
+    else:
+        from octop.api.applications.local import create_local_app
+
+        if ssl_certfile is not None or ssl_keyfile is not None:
+            raise ValueError("the loopback application does not use TLS")
+        app = create_local_app(settings)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=settings.bind_host,
+            port=settings.port,
+            log_level=log_level or "info",
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+            ws_max_size=_WS_MAX_BYTES,
+        )
+    )
+    await _serve(server)

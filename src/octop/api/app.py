@@ -138,6 +138,26 @@ def build_app(server: OctopServer) -> FastAPI:
             expose_headers=[ACCESS_TOKEN_RESPONSE_HEADER],
         )
 
+    if server.role == "cloud":
+        from octop.api.routers import auth, auth_mfa, control_plane
+
+        install_jwt_auth(app, server)
+        _mount_routers(
+            app,
+            [
+                _RouterMount(auth.router, "/api/auth", ["auth"]),
+                _RouterMount(auth_mfa.router, "/api/auth", ["auth"]),
+                _RouterMount(control_plane.router, "/api", []),
+            ],
+        )
+        if enable_api_docs:
+
+            @app.get("/api/docs", include_in_schema=False)
+            async def cloud_api_docs() -> HTMLResponse:
+                return get_scalar_api_reference(openapi_url=app.openapi_url, title="Octop API")
+
+        return app
+
     from octop.api.middleware.bridge_proxy import install as install_bridge_proxy
 
     # Bridge proxy must sit inside JWT auth so ``request.state.octop_user`` is set

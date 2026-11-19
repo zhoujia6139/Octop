@@ -14,6 +14,7 @@ import {
   type WebContents,
 } from "electron";
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { constants as fsConstants, existsSync, promises as fs } from "node:fs";
 import { type as osType, release as osRelease } from "node:os";
 import { dirname, join } from "node:path";
@@ -551,9 +552,12 @@ async function startBackend(): Promise<boolean> {
     bindHost: "127.0.0.1",
   });
   backendPort = port;
+  // P1 explicit integration; the product UI switches to the new API in P6.
+  const localRuntime = process.argv.includes("--local-runtime");
+  if (localRuntime) env.OCTOP_LOCAL_API_TOKEN = randomBytes(32).toString("hex");
   const sidecar = new SidecarSupervisor({
     executable: backend.interpreter,
-    args: [backend.launchScript, "run"],
+    args: [backend.launchScript, "run", ...(localRuntime ? ["--role", "desktop"] : [])],
     env,
     cwd: backend.cwd,
     port,

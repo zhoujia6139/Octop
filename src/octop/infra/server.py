@@ -15,24 +15,13 @@ from contextlib import suppress
 from dataclasses import dataclass
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-from octop_harness.plugins.registry import PluginRegistry
+from typing import TYPE_CHECKING, Any, Literal
 
 from octop.config import OctopConfig, load_config
-from octop.infra.agents.experts.catalog import ExpertCatalog, default_library_root
-from octop.infra.agents.manager import AgentManager
-from octop.infra.agents.plugins.manager import PluginManager
-from octop.infra.agents.providers.store import sync_provider_preset_models
-from octop.infra.agents.subagents.catalog import SubagentCatalog, default_package_root
 from octop.infra.control.mobile.config_probe import ensure_mobile_capabilities_probed
-from octop.infra.cron.manager import CronManager
 from octop.infra.db.factory import open_database, should_defer_control_plane_db
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.services import SharedServices, build_shared_services
-from octop.infra.gateway.gateway import Gateway
-from octop.infra.proactive.scheduler import ProactiveCareScheduler
-from octop.infra.proactive.service import ProactiveCareService
 from octop.infra.setup import password_file as _wizard_pw
 from octop.infra.setup.wizard_tokens import WizardTokenStore
 from octop.infra.users.manager import UserManager
@@ -40,11 +29,19 @@ from octop.infra.utils.paths import PathLayout
 from octop.infra.utils.process_resources import ensure_nofile_limit
 
 if TYPE_CHECKING:
+    from octop.infra.agents.definitions import AgentDefinitionService
+    from octop.infra.agents.experts.catalog import ExpertCatalog
+    from octop.infra.agents.manager import AgentManager
+    from octop.infra.agents.plugins.manager import PluginManager
+    from octop.infra.agents.subagents.catalog import SubagentCatalog
     from octop.infra.auth.ldap.service import LdapAuthService
     from octop.infra.auth.ldap.throttle import LdapBindThrottle
     from octop.infra.auth.sso.service import SsoService
+    from octop.infra.cron.manager import CronManager
     from octop.infra.db.services import SharedServices
+    from octop.infra.gateway.gateway import Gateway
     from octop.infra.history.trajectory.service import TrajectoryService
+    from octop.infra.proactive.scheduler import ProactiveCareScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -315,12 +312,19 @@ class AppRuntime:
 
 
 class OctopServer:
-    def __init__(self, home: Path | None = None) -> None:
+    def __init__(
+        self, home: Path | None = None, *, role: Literal["cloud", "desktop"] = "desktop"
+    ) -> None:
+        if role not in {"cloud", "desktop"}:
+            raise ValueError(f"unknown server role: {role!r}")
+        self.role = role
         self._home = home or PathLayout.from_env().root
         self.paths = PathLayout(self._home)
         self.config: OctopConfig | None = None
         self.services: SharedServices | None = None
         self.app_runtime: AppRuntime | None = None
+        self.agent_definitions: AgentDefinitionService | None = None
+        self._control_user_manager: UserManager | None = None
         self.expert_catalog: ExpertCatalog | None = None
         self.subagent_catalog: SubagentCatalog | None = None
         self.plugin_manager: PluginManager | None = None
@@ -337,6 +341,8 @@ class OctopServer:
     # Backward compat: expose user_manager directly
     @property
     def user_manager(self) -> UserManager | None:
+        if self.role == "cloud":
+            return self._control_user_manager
         return self.app_runtime.user_manager if self.app_runtime else None
 
     @property
@@ -393,11 +399,56 @@ class OctopServer:
 
     @property
     def database_bound(self) -> bool:
-        return self.services is not None and self.app_runtime is not None
+        return self.services is not None and self.user_manager is not None
+
+    def _open_control_plane(self) -> None:
+        """Open management storage without probing or loading host execution tools."""
+        from octop.infra.auth.captcha import boot_from_services
+        from octop.infra.utils.env_file import apply_env_file, env_file_path
+
+        self.paths.ensure_root()
+        apply_env_file(env_file_path(self.paths.root))
+        self._setup_logging()
+        self.config = load_config(self.paths.config)
+        db = open_database(self.config, self.paths)
+        try:
+            run_migrations(db)
+            self.services = build_shared_services(db=db, paths=self.paths, config=self.config)
+            boot_from_services(self.services.settings_repo, self.services.secret_repo)
+            self._ensure_jwt_secret()
+        except BaseException:
+            db.close()
+            self.services = None
+            raise
+
+    async def _start_control_plane(self) -> None:
+        from octop.infra.agents.definitions import AgentDefinitionService
+
+        await asyncio.get_running_loop().run_in_executor(None, self._open_control_plane)
+        assert self.services is not None
+        try:
+            manager = UserManager(self.services)
+            await manager.boot()
+            self._control_user_manager = manager
+            self.agent_definitions = AgentDefinitionService(self.services)
+        except BaseException:
+            self.services.db.close()
+            self.services = None
+            self._control_user_manager = None
+            raise
+        self._started_at = int(time.time())
+        self._started = True
 
     async def start(self, *, serve_background: bool = True) -> None:
         if self._started:
             return
+        if self.role == "cloud":
+            await self._start_control_plane()
+            return
+        from octop.infra.agents.experts.catalog import ExpertCatalog, default_library_root
+        from octop.infra.agents.plugins.manager import PluginManager
+        from octop.infra.agents.subagents.catalog import SubagentCatalog, default_package_root
+
         self._serve_background = serve_background
         self.paths.ensure_root()
         # fnOS/容器内非 root 用户场景：把用户级 npm 全局 bin 目录（~/.npm-global）
@@ -491,6 +542,13 @@ class OctopServer:
         )
 
     async def _boot_runtime(self, config: OctopConfig) -> None:
+        from octop.infra.agents.manager import AgentManager
+        from octop.infra.agents.providers.store import sync_provider_preset_models
+        from octop.infra.cron.manager import CronManager
+        from octop.infra.gateway.gateway import Gateway
+        from octop.infra.proactive.scheduler import ProactiveCareScheduler
+        from octop.infra.proactive.service import ProactiveCareService
+
         assert self.services is not None
         assert self.expert_catalog is not None
         assert self.plugin_manager is not None
@@ -706,6 +764,8 @@ class OctopServer:
 
     async def refresh_plugin_channels(self) -> None:
         """Reconcile only changed kinds and report registration failures to callers."""
+        from octop_harness.plugins.registry import PluginRegistry
+
         from octop.infra.errors import ErrorCode, OctopError
         from octop.infra.gateway.plugin_channels import (
             changed_plugin_channel_kinds,
@@ -738,6 +798,8 @@ class OctopServer:
         if self.plugin_manager is None:
             return
         try:
+            from octop_harness.plugins.registry import PluginRegistry
+
             from octop.infra.gateway.plugin_channels import apply_plugin_channels  # noqa: PLC0415
 
             apply_plugin_channels(registry=PluginRegistry())
@@ -789,6 +851,18 @@ class OctopServer:
 
     async def stop(self) -> None:
         if not self._started:
+            return
+        if self.role == "cloud":
+            try:
+                if self._control_user_manager is not None:
+                    await self._control_user_manager.shutdown_all()
+            finally:
+                if self.services is not None:
+                    await asyncio.get_running_loop().run_in_executor(None, self.services.db.close)
+                self.services = None
+                self.agent_definitions = None
+                self._control_user_manager = None
+                self._started = False
             return
         try:
             from octop.infra.connectors.gateway import agently_auth

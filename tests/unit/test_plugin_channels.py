@@ -457,7 +457,7 @@ async def test_existing_failed_registration_does_not_fail_unrelated_refresh(
         bridge.apply_plugin_channels(registry=registry, register=register, unregister=Mock())
 
     apply()
-    monkeypatch.setattr("octop.infra.server.PluginRegistry", lambda: registry)
+    monkeypatch.setattr("octop_harness.plugins.registry.PluginRegistry", lambda: registry)
     await OctopServer.refresh_plugin_channels(
         SimpleNamespace(app_runtime=None, _apply_plugin_channels=apply)
     )
@@ -489,7 +489,7 @@ async def test_removed_kind_retries_unregister_without_blocking_unrelated_refres
     def apply() -> None:
         bridge.apply_plugin_channels(registry=registry, register=gateway, unregister=unregister)
 
-    monkeypatch.setattr("octop.infra.server.PluginRegistry", lambda: registry)
+    monkeypatch.setattr("octop_harness.plugins.registry.PluginRegistry", lambda: registry)
     server = SimpleNamespace(app_runtime=None, _apply_plugin_channels=apply)
     apply()
     registry._regs.clear()

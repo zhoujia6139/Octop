@@ -29,6 +29,7 @@ from octop.infra.gateway.media.inbound_store import (
     inbound_rel_path,
     resolve_inbound_attachment_path,
 )
+from octop.infra.utils.image import sniff_image_media_type
 from octop.infra.utils.locale import Locale
 
 if TYPE_CHECKING:
@@ -96,19 +97,6 @@ def is_vision_attachment(
     if kind == "image":
         return True
     return is_image_inbound(media_type=media_type, path=path)
-
-
-def sniff_image_media_type(data: bytes) -> str | None:
-    """Detect common image formats when the client sends ``application/octet-stream``."""
-    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png"
-    if len(data) >= 3 and data[:3] == b"\xff\xd8\xff":
-        return "image/jpeg"
-    if len(data) >= 6 and data[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
 
 
 @dataclass(frozen=True)

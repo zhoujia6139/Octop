@@ -135,6 +135,12 @@ def _save_configfile_overrides(host: str | None, port: int | None) -> None:
 
 
 @click.command("run")
+@click.option(
+    "--role",
+    type=click.Choice(["cloud", "desktop"]),
+    default=None,
+    help="Select an independent cloud or local application; default entry switches with the new UI.",
+)
 @click.option("--host", default=None, help="Override bind host")
 # 0-65535, not 1-65535: ``resolve_bind`` reads port 0 as "let the OS pick a free
 # port". Without a range the value is persisted to config.json before uvicorn
@@ -158,6 +164,7 @@ def _save_configfile_overrides(host: str | None, port: int | None) -> None:
 @click.option("--ssl-certfile", default=None, help="TLS certificate file.")
 @click.option("--ssl-keyfile", default=None, help="TLS private key file.")
 def run(
+    role: str | None,
     host: str | None,
     port: int | None,
     reload: bool,
@@ -184,6 +191,7 @@ def run(
         fail_octop(exc)
     certfile, keyfile = _maybe_generate_self_signed(ssl, ssl_certfile, ssl_keyfile)
     _run_uvicorn(
+        role=role,
         host=host,
         port=port,
         reload=reload,

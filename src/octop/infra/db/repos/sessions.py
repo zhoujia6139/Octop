@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
-
-from octop_gateway.models import ChannelSubject
+from typing import TYPE_CHECKING, Any
 
 from octop.infra.db.pool import DatabasePool
 from octop.infra.db.repos._base import DbRow, now_ts, sql_in_placeholders
@@ -15,6 +13,9 @@ from octop.infra.utils.weixin_context import (
     selected_weixin_token,
     with_weixin_send_token,
 )
+
+if TYPE_CHECKING:
+    from octop_gateway.models import ChannelSubject
 
 
 def _decode_metadata(raw: str | None) -> dict[str, Any] | None:
@@ -106,6 +107,8 @@ class SessionRow:
         meta.setdefault("user_id", self.user_id)
         if self.channel_id:
             meta.setdefault("channel_id", self.channel_id)
+        from octop_gateway.models import ChannelSubject
+
         return ChannelSubject(
             subject_id=self.channel_subject_id,
             chat_type=self.channel_chat_type,
