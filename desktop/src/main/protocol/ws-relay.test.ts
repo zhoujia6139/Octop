@@ -121,12 +121,13 @@ function nextChunk(socket: Socket): Promise<string> {
 }
 
 async function withRelay(
-  options: { backendPort?: () => number; allowedOrigin?: string },
+  options: { backendPort?: () => number; backendToken?: () => string | null; allowedOrigin?: string },
   body: (context: { relay: WsRelay; baseUrl: string; token: string; port: number }) => Promise<void>,
 ): Promise<void> {
   const relay = new WsRelay({
     backendPort: options.backendPort ?? (() => 0),
     allowedOrigin: options.allowedOrigin ?? ORIGIN,
+    backendToken: options.backendToken,
   });
   const endpoint = await relay.start();
   const port = Number(new URL(endpoint.baseUrl).port);
@@ -276,4 +277,24 @@ test("stop() refuses connections afterwards", async () => {
   const port = Number(new URL(endpoint.baseUrl).port);
   await relay.stop();
   await assert.rejects(dial(port, `/${endpoint.token}/api/terminal/ws`), /ECONNREFUSED/);
+});
+
+
+test("main injects the current local token only into the upstream handshake", async () => {
+  const upstream = await startUpstream();
+  let token = "launch-one-local-credential";
+  try {
+    await withRelay({ backendPort: () => upstream.port, backendToken: () => token }, async ({ baseUrl, token: relayToken, port }) => {
+      assert.ok(!baseUrl.includes(token));
+      let result = await dial(port, `/${relayToken}/api/agents/a/threads/t/ws`);
+      assert.equal(result.status, 101);
+      result.socket?.destroy();
+      assert.equal(upstream.seen[0]?.headers.authorization, `Bearer ${token}`);
+      token = "replacement-sidecar-credential";
+      result = await dial(port, `/${relayToken}/api/agents/a/threads/t/ws`);
+      assert.equal(result.status, 101);
+      result.socket?.destroy();
+      assert.equal(upstream.seen[1]?.headers.authorization, `Bearer ${token}`);
+    });
+  } finally { await upstream.close(); }
 });

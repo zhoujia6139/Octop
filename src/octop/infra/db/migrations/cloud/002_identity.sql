@@ -1,0 +1,56 @@
+CREATE TABLE cloud_users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin','user')),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    security_version INTEGER NOT NULL DEFAULT 0,
+    binding_generation INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE cloud_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES cloud_users(user_id),
+    label TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    refresh_hash TEXT NOT NULL UNIQUE,
+    refresh_expires_at BIGINT NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
+    last_seen_at BIGINT NOT NULL
+);
+CREATE TABLE cloud_auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES cloud_users(user_id),
+    kind TEXT NOT NULL CHECK(kind IN ('account','device','challenge')),
+    security_version INTEGER NOT NULL,
+    device_id TEXT REFERENCES cloud_devices(device_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    generation INTEGER,
+    expires_at BIGINT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX cloud_sessions_user ON cloud_auth_sessions(user_id);
+CREATE INDEX cloud_sessions_expiry ON cloud_auth_sessions(expires_at);
+CREATE TABLE cloud_mfa (
+    user_id INTEGER PRIMARY KEY REFERENCES cloud_users(user_id),
+    secret_enc BLOB,
+    last_step BIGINT,
+    pending_enc BLOB,
+    pending_expires_at BIGINT,
+    pending_attempts INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE cloud_recovery_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES cloud_users(user_id),
+    code_hash TEXT NOT NULL
+);
+CREATE TABLE cloud_login_attempts (
+    username_hash TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL,
+    window_start BIGINT NOT NULL
+);
+CREATE TABLE secrets (
+    k TEXT PRIMARY KEY,
+    v BLOB NOT NULL,
+    created_at BIGINT NOT NULL,
+    rotated_at BIGINT
+);

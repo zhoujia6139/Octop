@@ -105,6 +105,9 @@
     "notImplemented": "页面建设中。"
   },
   "apiErrors": {
+    "DEVICE_REVOKED": "设备授权已过期或撤销，请重新登录并绑定设备。",
+    "DEVICE_BINDING_EXISTS": "账号已绑定执行设备，请确认替换以撤销原设备。",
+    "CLOUD_UNAVAILABLE": "云端服务暂时不可用，请稍后重试。",
     "AUTH_FAILED": "认证失败。",
     "TOKEN_EXPIRED": "登录已过期，请重新登录。",
     "SETUP_REQUIRED": "需要完成初始设置。",

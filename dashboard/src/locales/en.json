@@ -105,6 +105,9 @@
     "notImplemented": "This page is under construction."
   },
   "apiErrors": {
+    "DEVICE_REVOKED": "The device authorization has expired or been revoked. Sign in and bind this device again.",
+    "DEVICE_BINDING_EXISTS": "An executing device is already bound. Confirm replacement to revoke it.",
+    "CLOUD_UNAVAILABLE": "The cloud service is unavailable. Please try again later.",
     "AUTH_FAILED": "Authentication failed.",
     "TOKEN_EXPIRED": "Session expired. Please sign in again.",
     "SETUP_REQUIRED": "Initial setup is required.",

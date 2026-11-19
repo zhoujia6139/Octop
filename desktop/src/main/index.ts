@@ -30,6 +30,7 @@ import {
 import { resolveAppVersion } from "./app-version";
 import { desktopLog, installDesktopLog } from "./log/desktop-log";
 import { DeviceCredentialStore } from "./session/device-credential";
+import { CloudSessionClient } from "./session/cloud-session";
 import { DeviceSessionClient } from "./session/device-session";
 import { safeStorageCipher, warnIfKeychainUnavailable } from "./session/safe-storage-cipher";
 import { ClientSettingsStore, defaultClientSettingsPath } from "./storage/client-settings";
@@ -49,7 +50,7 @@ import { sha256File } from "./supervisor/sha256";
 import { buildSidecarEnv } from "./supervisor/process-tree";
 import { SidecarSupervisor } from "./supervisor/sidecar";
 import { contentTypeFor, isExternalLink, resolveDashboardFile, resolveStaticPath } from "./protocol/static-handler";
-import { isApiPath, sanitizeForwardHeaders, toBackendUrl } from "./protocol/stream-proxy";
+import { isApiPath, isCloudControlPath, sanitizeForwardHeaders, toBackendUrl } from "./protocol/stream-proxy";
 import { WsRelay } from "./protocol/ws-relay";
 import {
   channelHeadTag,
@@ -120,6 +121,8 @@ let settingsStore: ClientSettingsStore;
 // §7 accounts: renews the Dashboard session without a password. Registered by
 // the renderer once it holds a JWT; used whenever that JWT has expired.
 let deviceSession: DeviceSessionClient | null = null;
+let cloudSession: CloudSessionClient | null = null;
+let localApiToken: string | null = null;
 // Resolved after `whenReady` — `app.getVersion()` must not run at module load.
 let appVersion = "";
 // §6.3 step 1: once an install is under way the proxy answers 503 so no new API
@@ -255,7 +258,11 @@ function registerProtocol(staticRootDir: string): void {
     if (isApiPath(pathname)) {
       if (apiAdmissionClosed) return new Response("update in progress", { status: 503 });
       const target = toBackendUrl(backendPort, pathname, url.search);
+      if (localApiToken && isCloudControlPath(url.pathname)) {
+        return new Response(null, { status: 403 });
+      }
       const headers = sanitizeForwardHeaders(request.headers);
+      if (localApiToken) headers.authorization = `Bearer ${localApiToken}`;
       headers["x-octop-proxy"] = "1";
       return net.fetch(target, {
         method: request.method,
@@ -505,6 +512,43 @@ function registerIpcHandlers(): void {
     app.quit();
   });
 
+  const trustedCloudCaller = (event: Electron.IpcMainInvokeEvent): CloudSessionClient => {
+    const frame = event.senderFrame;
+    if (!cloudSession || !frame || frame !== event.sender.mainFrame ||
+        !dashboardOrigin || new URL(frame.url).protocol !== new URL(dashboardOrigin).protocol ||
+        new URL(frame.url).host !== new URL(dashboardOrigin).host) {
+      throw new Error("AUTH_FAILED");
+    }
+    return cloudSession;
+  };
+  ipcMain.handle(IPC_CHANNELS.cloudLogin, (event, username: unknown, password: unknown) => {
+    if (typeof username !== "string" || username.length > 64 || typeof password !== "string" || password.length > 1024) throw new Error("AUTH_FAILED");
+    return trustedCloudCaller(event).login(username, password);
+  });
+  ipcMain.handle(IPC_CHANNELS.cloudMfa, (event, code: unknown) => {
+    if (typeof code !== "string" || code.length > 64) throw new Error("AUTH_FAILED");
+    return trustedCloudCaller(event).verifyMfa(code);
+  });
+  ipcMain.handle(IPC_CHANNELS.cloudBind, (event, replace: unknown) => {
+    if (typeof replace !== "boolean") throw new Error("AUTH_FAILED");
+    return trustedCloudCaller(event).bind(replace);
+  });
+  ipcMain.handle(IPC_CHANNELS.cloudRenew, (event) => trustedCloudCaller(event).renew());
+  ipcMain.handle(IPC_CHANNELS.cloudLogout, async (event) => {
+    const client = trustedCloudCaller(event);
+    try {
+      return await client.logout();
+    } catch (error) {
+      // If detachment could not be confirmed, stop the local process before
+      // returning the failure; a logout must not leave account tasks running.
+      await supervisor?.stop();
+      localApiToken = null;
+      backendPort = 0;
+      throw error;
+    }
+  });
+  ipcMain.handle(IPC_CHANNELS.cloudCurrent, (event) => trustedCloudCaller(event).current());
+
   ipcMain.handle(IPC_CHANNELS.sessionRegister, (_event, accessToken: unknown): Promise<boolean> => {
     if (!isUsableAccessToken(accessToken)) return Promise.resolve(false);
     return deviceSession?.register(accessToken) ?? Promise.resolve(false);
@@ -554,7 +598,10 @@ async function startBackend(): Promise<boolean> {
   backendPort = port;
   // P1 explicit integration; the product UI switches to the new API in P6.
   const localRuntime = process.argv.includes("--local-runtime");
-  if (localRuntime) env.OCTOP_LOCAL_API_TOKEN = randomBytes(32).toString("hex");
+  if (localRuntime) {
+    localApiToken = randomBytes(32).toString("hex");
+    env.OCTOP_LOCAL_API_TOKEN = localApiToken;
+  }
   const sidecar = new SidecarSupervisor({
     executable: backend.interpreter,
     args: [backend.launchScript, "run", ...(localRuntime ? ["--role", "desktop"] : [])],
@@ -585,6 +632,9 @@ async function startBackend(): Promise<boolean> {
       const tail = sidecar.outputTail().trim();
       if (tail) desktopLog().error(tail);
     }
+  }
+  if (ready && localRuntime && cloudSession) {
+    void cloudSession.renew().catch(() => desktopLog().info("cloud session renewal unavailable"));
   }
   return ready;
 }
@@ -1020,6 +1070,15 @@ async function boot(): Promise<void> {
     label: `${process.platform}-${process.arch}`,
   });
 
+  if (process.argv.includes("--local-runtime")) {
+    cloudSession = new CloudSessionClient({
+      store: new DeviceCredentialStore(join(octopHome, "cloud-session"), cipher),
+      localBaseUrl: () => apiAdmissionClosed || !backendPort ? null : `http://127.0.0.1:${backendPort}`,
+      localToken: () => localApiToken,
+      label: `${process.platform}-${process.arch}`,
+    });
+  }
+
   registerProtocol(dashboardRoot(portableDir));
   registerIpcHandlers();
 
@@ -1031,6 +1090,7 @@ async function boot(): Promise<void> {
   wsRelay = new WsRelay({
     backendPort: () => (apiAdmissionClosed || !backendPort ? 0 : backendPort),
     allowedOrigin: windowOrigin,
+    backendToken: () => localApiToken,
   });
   try {
     await wsRelay.start();
@@ -1093,6 +1153,7 @@ app.on("activate", () => {
 app.on("before-quit", (event) => {
   if (quitting) return;
   destroySystemTray();
+  cloudSession?.stop();
   const sidecar = supervisor;
   const relay = wsRelay;
   if (!sidecar && !relay) return;

@@ -1,6 +1,6 @@
 # Octop 桌面 Agent 与云端管理改造计划
 
-> 日期：2026-11-19。状态：P0、P1 已完成验收；按用户要求暂停在 P2 之前。
+> 日期：2026-11-19。状态：P0、P1、P2 已完成验收；当前停在 P3 之前。
 >
 > 本次修订采用「基于 octop-harness 建立新的云端与桌面应用层，选择性迁入 Octop 成熟能力」的路线。本文记录已确认的产品边界，并给出后续实现顺序。勾选项表示实现与验收均完成；尚未验收的探索性代码不计为完成。模块名、接口名和表名是设计建议，实施时结合现有代码确定，不代表已存在。
 
@@ -261,17 +261,30 @@ P1 验收记录（2026-11-19）：
 - 后端：`make all` 通过，5955 passed、45 skipped；最终 WS 专项 `uv run pytest tests/integration/test_independent_applications.py -q --tb=short` 为 9 passed。格式、Lint 和全量 mypy 通过。跳过项按仓库环境/平台标记处理。
 - 数据库：独立 PostgreSQL 17 测试容器下，`uv run pytest tests/unit/db/test_application_migrations.py -q --tb=short` 为 3 passed，覆盖 SQLite 回滚/水位与 PG 双 SQL 初始化/外键；另实测云端 PG 工厂启动、健康检查和关闭。测试 schema 与容器在验证后清理。
 - 前端/壳：Dashboard `npx tsc -b` 与 `make build-frontend` 通过；Electron 在 Node 24.18.0、pnpm 12.15.0 下 `typecheck`、`test`（195 passed）、`build` 通过。未声称验证了 Windows/Linux 原生安装器或完整产品 UI，这些仍在 P7。
-- 暂停位置：用户明确要求完成 P1 后暂停，P2 未开始。P1 云端仅有基础配置、数据库、健康与可选文档，登录/设备属于 P2，真实模型网关属于 P3，Agent/skills 管理与发布属于 P4。Memory 与 Browser 的业务接入仍按后续阶段推进。
+- 当时暂停位置：用户要求完成 P1 后暂停，彼时 P2 未开始；本轮已另行授权并完成 P2。P1 云端仅有基础配置、数据库、健康与可选文档，登录/设备属于 P2，真实模型网关属于 P3，Agent/skills 管理与发布属于 P4。Memory 与 Browser 的业务接入仍按后续阶段推进。
 
 ### P2：云端登录与单设备授权
 
-- [ ] 按 P0 清单迁入账号、密码、Token、所选登录方式与权限校验，使用新云端容器和身份表，不依赖旧全量路由或服务启动。
-- [ ] 增加云端设备注册、续期、撤销和重新绑定；登录及撤销链有独立测试，不只复用成功登录路径。
-- [ ] Electron 主进程安全保存云端长期凭证，sidecar 获得所需短期授权，保持本机凭证与云端凭证隔离。
-- [ ] 绑定代次参与模型与同步鉴权，旧设备被替换后不能继续写入或消耗平台额度。
-- [ ] 按账号隔离本地数据与 outbox；退出或切换账号不自动删除未同步数据，也不能上传到新账号。
+- [x] 按 P0 清单迁入账号、密码、Token、所选登录方式与权限校验，使用新云端容器和身份表，不依赖旧全量路由或服务启动。
+- [x] 增加云端设备注册、续期、撤销和重新绑定；登录及撤销链有独立测试，不只复用成功登录路径。
+- [x] Electron 主进程安全保存云端长期凭证，sidecar 获得所需短期授权，保持本机凭证与云端凭证隔离。
+- [x] 为后续模型与同步接口提供按绑定代次校验的统一事务鉴权入口；旧设备被替换后不能再取得写入或额度授权。实际网关/同步接口分别在 P3/P5 接入。
+- [x] 按账号隔离本地数据库、工作区及后续 outbox 的存储边界；退出或切换账号不删除未同步数据，后台授权要求匹配原账号与绑定。outbox 表与上传任务在 P5 实现。
 
 验收：登录与应用重启后的续期正常；退出、撤销、禁用用户和重新绑定均生效；本机未授权请求、跨用户资源访问及旧设备写入被拒绝。
+
+P2 验收记录（2026-11-19）：
+
+- 登录方式：用户确认首期为账号密码 + TOTP MFA（含恢复码）；不迁入 SSO、LDAP 或 Passkey。复用现有 Argon2 密码策略、TOTP 原语、恢复码生成/规范化及 Fernet，保留重放防护、失败锁定、禁用和撤销校验。MFA 包旧服务按需导出，避免纯原语加载旧 SharedServices。
+- 云端：`infra/identity/`、独立身份 repo 和云端 v2 双 SQL 迁移，挂载新的认证/用户/设备路由。P1 已可初始化 v1 数据库，因此新增 002 并保留 001。通过 `octop-cloud-init` 交互初始化首个管理员，没有公共抢注管理员接口；新 schema 不引入旧全量容器。
+- 凭证：随机不透明 Token 按 account/device/challenge 分用途，云端只保存摘要；账号 15 分钟、设备 access 5 分钟、设备 refresh 30 天绝对有效期。设备绑定/替换使用行锁与递增 generation，密码/MFA/账号状态变更撤销已有授权。公开 `authorized_device` 事务边界供 P3/P5 使用，未提前实现模型网关或同步写入。
+- Electron：新增独立云端会话客户端与受来源校验的 IPC；长期凭证复用 safeStorage 加密，无 keychain 时仅驻内存，renderer 不取得云端 Token。sidecar 只接收经云端复核的短期设备授权；本机 HTTP/WS 凭证独立注入，renderer 不能通过普通中继调用凭证控制路径。
+- 本地：按 cloud origin、云端实例 ID 与 user_id 选择独立账号目录，数据库和 Harness 工作区随账号隔离；切换/退出中断活动 turn 并关闭旧实例，旧 WS 不能进入新账号。保留原账号文件；后台取授权必须携带并匹配原账号身份，不能将旧账号任务授权给新账号。
+- 退出：本地解除账号与清除长期凭证优先；云端不可达时明确返回撤销未确认（`revoked=false`）。若 sidecar 解除失败，主进程停止 sidecar 后报告失败。已打开账号可离线查看；冷启动首次选择账号需要在线验证，离线冷启动体验留待数据恢复/产品阶段。
+- 后端：最终 `make all` 通过，5971 passed、55 skipped；随后 `make lint typecheck` 与最终身份/CLI/i18n 专项（107 passed、10 skipped）通过。跳过项含无 PG 环境时的参数化用例，PG 实例下已单独实测；mypy 覆盖 715 个源文件。
+- 数据库：PostgreSQL 17 临时实例下，身份 + 迁移专项为 24 passed，覆盖 SQLite/PG 两种事务、MFA、并发绑定、撤销与本地账号隔离。云端-only 全新虚拟环境完成密码/MFA/恢复码/设备绑定/重启续期，未安装 Harness、Memory、Browser、Gateway 或 LangChain。
+- 联调：用 Node 执行 Electron 主进程云端会话客户端，连接两个真实 HTTP uvicorn 新应用，完成 MFA 登录 → 绑定 → sidecar 选择账号 → 续期 → 退出撤销。Electron `typecheck`、`test`（205 passed）和 `build` 通过；Dashboard `npx tsc -b`、`make build-frontend` 通过。安全存储测试使用注入 cipher 验证策略，完整 GUI/OS keychain 和原生安装器的跨平台手工验收仍在 P7。
+- 文档：[docs/cloud-identity.md](docs/cloud-identity.md) 记录启动、路由、凭证期限、IPC、隔离和离线退出语义；API 文档与 OpenAPI 的 summary/schema/Bearer 定义已核对。产品登录页面在 P6，P3 及后续阶段未开始。
 
 ### P3：模型网关、额度与结算闭环
 

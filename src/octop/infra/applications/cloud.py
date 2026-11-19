@@ -7,6 +7,10 @@ import asyncio
 from octop.application_config import CloudSettings
 from octop.infra.db.application_migrations import migrate_application
 from octop.infra.db.pool import DatabasePool, PostgresPool, SqlitePool
+from octop.infra.db.repos.cloud_identity import CloudIdentityRepo
+from octop.infra.db.repos.secrets import SecretRepo
+from octop.infra.identity.service import CloudIdentity
+from octop.infra.utils.ulid import new_ulid
 
 
 class CloudApplication:
@@ -14,6 +18,7 @@ class CloudApplication:
         self.settings = settings
         self.db: DatabasePool | None = None
         self.schema_version = 0
+        self.identity: CloudIdentity | None = None
 
     def _open(self) -> tuple[DatabasePool, int]:
         self.settings.home.mkdir(parents=True, exist_ok=True)
@@ -23,7 +28,14 @@ class CloudApplication:
             else SqlitePool(self.settings.home / "cloud.db")
         )
         try:
-            return db, migrate_application(db, "cloud")
+            version = migrate_application(db, "cloud")
+            repo = CloudIdentityRepo(db)
+            with repo.transaction() as tx:
+                cloud_id = tx.setting("cloud_id", new_ulid())
+            self.identity = CloudIdentity(
+                repo, SecretRepo(db), cloud_id=cloud_id, timezone=self.settings.default_timezone
+            )
+            return db, version
         except BaseException:
             db.close()
             raise
@@ -36,5 +48,6 @@ class CloudApplication:
 
     async def close(self) -> None:
         if self.db is not None:
+            self.identity = None
             db, self.db = self.db, None
             await asyncio.get_running_loop().run_in_executor(None, db.close)

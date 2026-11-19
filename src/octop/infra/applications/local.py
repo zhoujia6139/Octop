@@ -259,7 +259,7 @@ class LocalApplication:
             self._pending[thread_id] = (turn_id, sequence)
         yield terminal
 
-    async def close(self) -> None:
+    async def close(self, *, close_model_factory: bool = True) -> None:
         self._closing = True
         tasks = list(self._active.values())
         for task in tasks:
@@ -269,7 +269,7 @@ class LocalApplication:
             results = await asyncio.gather(
                 *(agent.aclose() for agent in self._agents.values()), return_exceptions=True
             )
-            if self._model_factory is not None:
+            if close_model_factory and self._model_factory is not None:
                 await self._model_factory.aclose()
             for result in results:
                 if isinstance(result, BaseException):

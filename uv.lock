@@ -2611,7 +2611,10 @@ browser = [
     { name = "playwright" },
 ]
 cloud = [
+    { name = "argon2-cffi" },
+    { name = "cryptography" },
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "pyotp" },
 ]
 desktop = [
     { name = "mss" },
@@ -2724,6 +2727,7 @@ dev = [
     { name = "build" },
     { name = "httpx" },
     { name = "mypy" },
+    { name = "octop", extra = ["cloud", "legacy-runtime", "local-runtime"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -2737,10 +2741,12 @@ dev = [
 requires-dist = [
     { name = "acme", marker = "extra == 'legacy-runtime'", specifier = ">=5.6.0" },
     { name = "apscheduler", marker = "extra == 'legacy-runtime'", specifier = ">=3.10,<4" },
+    { name = "argon2-cffi", marker = "extra == 'cloud'", specifier = ">=23.1" },
     { name = "argon2-cffi", marker = "extra == 'legacy-runtime'", specifier = ">=23.1" },
     { name = "boto3", marker = "extra == 'legacy-runtime'", specifier = ">=1.40.61" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "click", specifier = ">=8.1" },
+    { name = "cryptography", marker = "extra == 'cloud'", specifier = ">=41" },
     { name = "cryptography", marker = "extra == 'legacy-runtime'", specifier = ">=41" },
     { name = "edge-tts", marker = "extra == 'legacy-runtime'", specifier = ">=6.1" },
     { name = "fastapi", specifier = ">=0.110" },
@@ -2776,6 +2782,7 @@ requires-dist = [
     { name = "pyjwt", marker = "extra == 'legacy-runtime'", specifier = ">=2.8" },
     { name = "pymupdf", marker = "extra == 'knowledge-ocr'", specifier = ">=1.24" },
     { name = "pynput", marker = "extra == 'desktop'", specifier = ">=1.7" },
+    { name = "pyotp", marker = "extra == 'cloud'", specifier = ">=2.10.0" },
     { name = "pyotp", marker = "extra == 'legacy-runtime'", specifier = ">=2.10.0" },
     { name = "pypdf", marker = "extra == 'legacy-runtime'", specifier = ">=5.0" },
     { name = "pypinyin", marker = "extra == 'legacy-runtime'", specifier = ">=0.53" },
@@ -2810,6 +2817,7 @@ dev = [
     { name = "build", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.10" },
+    { name = "octop", extras = ["legacy-runtime", "local-runtime", "cloud"] },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "pytest-cov", specifier = ">=4.1" },

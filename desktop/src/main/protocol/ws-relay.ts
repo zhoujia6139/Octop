@@ -29,6 +29,8 @@ const HANDSHAKE_TIMEOUT_MS = 5_000;
 export interface WsRelayOptions {
   /** Current sidecar port, or 0 while it is down / being replaced. */
   backendPort: () => number;
+  /** New local application token, supplied only by main, never from a URL. */
+  backendToken?: () => string | null;
   /** Origin the shell's own pages report, e.g. ``octop://app``. */
   allowedOrigin: string;
 }
@@ -185,6 +187,8 @@ export class WsRelay {
       `Origin: http://127.0.0.1:${port}`,
       "x-octop-proxy: 1",
     ];
+    const backendToken = this.options.backendToken?.();
+    if (backendToken) headers.push(`Authorization: Bearer ${backendToken}`);
     for (const [header, canonical] of FORWARD_REQUEST_HEADERS) {
       const value = req.headers[header];
       if (typeof value === "string" && value) headers.push(`${canonical}: ${value}`);

@@ -56,10 +56,11 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
                     "protocol_version": 1,
                     "role": "cloud",
                     "ok": True,
-                    "schema_version": 1,
+                    "schema_version": 2,
                 }
                 paths = (await client.get("/api/openapi.json")).json()["paths"]
-                assert set(paths) == {"/api/health"}
+                assert "/api/auth/login" in paths
+                assert not any("/chat" in path or "/agents" in path for path in paths)
                 assert (await client.get("/api/agents")).status_code == 404
                 assert (await client.get("/api/docs")).status_code == 200
             with app.state.cloud.db.connect() as conn:
@@ -67,7 +68,18 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
                     row[0]
                     for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
-                assert tables == {"cloud_settings", "cloud_schema_version"}
+                assert tables == {
+                    "cloud_settings",
+                    "cloud_schema_version",
+                    "cloud_users",
+                    "cloud_devices",
+                    "cloud_auth_sessions",
+                    "cloud_mfa",
+                    "cloud_recovery_codes",
+                    "cloud_login_attempts",
+                    "secrets",
+                    "sqlite_sequence",
+                }
         assert app.state.cloud.db is None
     assert not (tmp_path / "octop.db").exists()
 
@@ -161,8 +173,8 @@ async def test_local_authentication_and_production_has_no_direct_provider(tmp_pa
             response = await client.post(
                 "/api/agents", json={"name": "Local", "model_id": "platform/test"}, headers=HEADERS
             )
-            assert response.status_code == 503
-            assert response.json()["error"]["code"] == "PLATFORM_MODEL_UNAVAILABLE"
+            assert response.status_code == 401
+            assert response.json()["error"]["code"] == "AUTH_FAILED"
             response = await client.post(
                 "/api/agents",
                 json={"name": "Local", "model_id": "x", "api_key": "key", "backend": "filesystem"},

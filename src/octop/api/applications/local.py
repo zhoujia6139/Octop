@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, Literal
 
+import httpx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -22,14 +23,19 @@ from octop.infra.applications.contracts import (
     PublicId,
     ThreadView,
 )
-from octop.infra.applications.local import LocalApplication
+from octop.infra.applications.local_accounts import LocalAccounts
 from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.identity.contracts import IdentityView, TokenView
 from octop.infra.utils.locale import resolve_request_locale
 
 if TYPE_CHECKING:
     from octop_harness.llm.factory import ChatModelFactory
 
 logger = logging.getLogger(__name__)
+
+
+class CloudConfig(BaseModel):
+    cloud_url: str | None
 
 
 class ApprovalDecision(BaseModel):
@@ -58,17 +64,20 @@ class TurnCommand(BaseModel):
 
 
 def create_local_app(
-    settings: LocalSettings, *, model_factory: ChatModelFactory | None = None
+    settings: LocalSettings,
+    *,
+    model_factory: ChatModelFactory | None = None,
+    cloud_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
-    runtime = LocalApplication(settings, model_factory=model_factory)
+    accounts = LocalAccounts(settings, model_factory=model_factory, cloud_transport=cloud_transport)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await runtime.start()
+        await accounts.start()
         try:
             yield
         finally:
-            await runtime.close()
+            await accounts.close()
 
     app = FastAPI(
         title="Octop Local API",
@@ -77,7 +86,8 @@ def create_local_app(
         redoc_url=None,
         openapi_url="/api/openapi.json" if settings.enable_api_docs else None,
     )
-    app.state.local = runtime
+    app.state.accounts = accounts
+    app.state.local = accounts.runtime
     configure_http(app, api_docs=settings.enable_api_docs)
 
     def authenticated(value: str) -> bool:
@@ -103,8 +113,50 @@ def create_local_app(
     )
     async def health() -> Health:
         return Health(
-            role="local", ok=runtime.services is not None, schema_version=runtime.schema_version
+            role="local",
+            ok=accounts.started,
+            schema_version=accounts.runtime.schema_version if accounts.runtime else 1,
         )
+
+    @app.get(
+        "/api/cloud/config",
+        response_model=CloudConfig,
+        tags=["auth"],
+        summary="Get the configured cloud origin for the desktop main process",
+    )
+    async def cloud_config() -> CloudConfig:
+        return CloudConfig(cloud_url=settings.cloud_url)
+
+    @app.put(
+        "/api/cloud/session",
+        response_model=IdentityView,
+        tags=["auth"],
+        summary="Verify short-lived device access and select its local account",
+    )
+    async def attach_cloud(body: TokenView) -> IdentityView:
+        identity = await accounts.attach(body)
+        app.state.local = accounts.runtime
+        return identity
+
+    @app.get(
+        "/api/cloud/session",
+        response_model=IdentityView | None,
+        tags=["auth"],
+        summary="Get the selected local account; does not grant cloud access",
+    )
+    async def cloud_session() -> IdentityView | None:
+        return accounts.identity
+
+    @app.delete(
+        "/api/cloud/session",
+        status_code=204,
+        tags=["auth"],
+        summary="Close the local account without deleting data or pending uploads",
+    )
+    async def detach_cloud() -> Response:
+        await accounts.detach()
+        app.state.local = None
+        return Response(status_code=204)
 
     @app.get(
         "/api/agents",
@@ -113,7 +165,7 @@ def create_local_app(
         summary="List local instances",
     )
     async def list_agents() -> list[LocalAgentView]:
-        return await runtime.list_agents()
+        return await accounts.require_runtime().list_agents()
 
     @app.post(
         "/api/agents",
@@ -124,7 +176,7 @@ def create_local_app(
         description="Requires a trusted platform model adapter. Provider credentials and backend paths are not accepted.",
     )
     async def create_agent(body: LocalAgentInput) -> LocalAgentView:
-        return await runtime.create_agent(body)
+        return await accounts.require_runtime().create_agent(body)
 
     @app.post(
         "/api/agents/{agent_id}/threads",
@@ -134,7 +186,7 @@ def create_local_app(
         summary="Create a local conversation",
     )
     async def create_thread(agent_id: PublicId) -> ThreadView:
-        return await runtime.create_thread(agent_id)
+        return await accounts.require_runtime().create_thread(agent_id)
 
     @app.websocket("/api/agents/{agent_id}/threads/{thread_id}/ws")
     async def chat(websocket: WebSocket, agent_id: PublicId, thread_id: PublicId) -> None:
@@ -144,6 +196,11 @@ def create_local_app(
             return
         origin = websocket.headers.get("origin")
         if origin and origin not in {"octop://app", f"http://{websocket.headers.get('host', '')}"}:
+            await websocket.close(code=1008)
+            return
+        try:
+            runtime = accounts.require_runtime()
+        except OctopError:
             await websocket.close(code=1008)
             return
         await websocket.accept()

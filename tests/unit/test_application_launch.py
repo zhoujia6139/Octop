@@ -70,3 +70,37 @@ def test_application_config_is_isolated_and_local_has_no_supplier_fields(
         LocalSettings(home=tmp_path, database_url="postgresql://host/db")
     with pytest.raises(ValidationError):
         CloudSettings(home=tmp_path, database_url="https://invalid.example")
+
+
+def test_cloud_initializer_creates_only_first_admin(tmp_path, monkeypatch):
+    from octop.cli.commands.application import cloud_init
+
+    monkeypatch.delenv("OCTOP_CLOUD_DATABASE_URL", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(
+        cloud_init,
+        ["--home", str(tmp_path), "--username", "Admin"],
+        input="Bootstrap-good-5391\nBootstrap-good-5391\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "Bootstrap-good-5391" not in result.output
+    result = runner.invoke(
+        cloud_init,
+        ["--home", str(tmp_path), "--username", "second"],
+        input="Bootstrap-good-5391\nBootstrap-good-5391\n",
+    )
+    assert result.exit_code != 0
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://public.example",
+        "https://user:password@example.test",
+        "https://cloud.test/path",
+        "https://cloud.test/?token=secret",
+    ],
+)
+def test_local_cloud_origin_rejects_insecure_or_credential_urls(tmp_path, url):
+    with pytest.raises(ValidationError):
+        LocalSettings(home=tmp_path, cloud_url=url)

@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import {
   IPC_CHANNELS,
   type ClientSettings,
+  type CloudSessionResult,
+  type CloudIdentity,
   type IssuedSession,
   type PlatformInfo,
   type UpdateCheckResult,
@@ -119,6 +121,26 @@ const bridge = {
    * Device session (§7 accounts). The renderer can ask for a JWT, but the
    * credential behind it never crosses this bridge.
    */
+  cloud: {
+    login(username: string, password: string): Promise<CloudSessionResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudLogin, username, password);
+    },
+    verifyMfa(code: string): Promise<CloudSessionResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudMfa, code);
+    },
+    bind(replace = false): Promise<CloudSessionResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudBind, replace);
+    },
+    renew(): Promise<CloudIdentity | null> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudRenew);
+    },
+    logout(): Promise<{ revoked: boolean }> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudLogout);
+    },
+    current(): Promise<CloudIdentity | null> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudCurrent);
+    },
+  },
   session: {
     register(accessToken: string): Promise<boolean> {
       return ipcRenderer.invoke(IPC_CHANNELS.sessionRegister, accessToken);

@@ -23,15 +23,15 @@ class SecretRepo:
             return existing
         value = factory()
         with self._db.transaction() as conn:
-            # Check again inside transaction to avoid race
-            r = conn.execute("SELECT v FROM secrets WHERE k = ?", (k,)).fetchone()
-            if r is not None:
-                return bytes(r["v"])
+            # The UNIQUE constraint arbitrates concurrent PostgreSQL workers;
+            # SELECT followed by INSERT alone would race on an absent row.
             conn.execute(
-                "INSERT INTO secrets(k, v, created_at) VALUES (?, ?, ?)",
+                "INSERT INTO secrets(k, v, created_at) VALUES (?, ?, ?) ON CONFLICT(k) DO NOTHING",
                 (k, value, now_ts()),
             )
-        return value
+            row = conn.execute("SELECT v FROM secrets WHERE k = ?", (k,)).fetchone()
+            assert row is not None
+            return bytes(row["v"])
 
     def put(self, k: str, value: bytes) -> None:
         now = now_ts()

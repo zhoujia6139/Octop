@@ -20,11 +20,11 @@ def test_new_watermark_is_independent_of_legacy_version(tmp_path: Path):
         with db.transaction() as conn:
             conn.execute("CREATE TABLE _schema_version (version INTEGER)")
             conn.execute("INSERT INTO _schema_version VALUES (999)")
-        assert migrate_application(db, "cloud") == 1
-        assert migrate_application(db, "cloud") == 1
+        assert migrate_application(db, "cloud") == 2
+        assert migrate_application(db, "cloud") == 2
         with db.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 999
-            conn.execute("UPDATE cloud_schema_version SET version=2")
+            conn.execute("UPDATE cloud_schema_version SET version=999")
         with pytest.raises(RuntimeError, match="newer"):
             migrate_application(db, "cloud")
     finally:
@@ -67,8 +67,8 @@ def test_postgresql_schema_pairs_initialize_idempotently_and_reference_public_id
         try:
             db = PostgresPool(make_conninfo(dsn, options=f"-csearch_path={schema}"))
             for role in ("cloud", "local"):
-                assert migrate_application(db, role) == 1
-                assert migrate_application(db, role) == 1
+                assert migrate_application(db, role) == (2 if role == "cloud" else 1)
+                assert migrate_application(db, role) == (2 if role == "cloud" else 1)
             with db.transaction() as conn:
                 conn.execute(
                     "INSERT INTO local_agents(agent_id,name,model_id,created_at) VALUES ('agent-a','A','platform/model',1)"

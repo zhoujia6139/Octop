@@ -179,4 +179,8 @@ uv run --no-dev --extra local-runtime octop-local --home /path/to/local --port 8
 
 P0 交付物是本合同、能力审计和实现前置条件。P1 验收的是新应用与 Harness 最小运行链，旧定义 CRUD 不计入新资源管理成果。新版认证、资源发布、计费、同步和产品 UI 分别属于后续阶段。
 
-P2–P7 按 Plan.md 执行，不把 P1 当作完整生产服务。用户要求在 P1 验收完成后暂停，尚未授权本轮进入 P2。旧探索性定义接口的进程内锁不作为新资源写入的事务保证，P4 需使用新 schema 的数据库事务与约束。
+P2 已获用户授权，实施了密码 + TOTP MFA（含恢复码）、云端单设备授权、Electron 安全凭证交接与本地账号隔离，详见 [cloud-identity.md](cloud-identity.md)。新云端身份 schema 为 v2；本地沿用 v1，由已验证的账号身份选择各自的数据库与工作区。P3–P7 尚未开始，真实模型调用、发布、outbox 及同步仍按 Plan.md 各阶段验收。
+
+P2 审查后直接复用了 Argon2 密码策略、TOTP 原语、恢复码生成/规范化和 Fernet 能力；MFA 包的旧服务入口改为按需导出以切断 SharedServices 依赖。新 Token 采用独立 purpose 的随机不透明凭证、服务端摘要和实时身份校验，未迁入旧 JWT 的离线角色信任。所选登录方式已由用户明确为密码 + TOTP，不迁入 SSO、LDAP 或 Passkey。Electron 复用 DeviceCredentialStore/safeStorage，但云端长期凭证与旧 loopback 凭证存储隔离。
+
+旧探索性定义接口的进程内锁不作为新资源写入的事务保证，P4 需使用新 schema 的数据库事务与约束。

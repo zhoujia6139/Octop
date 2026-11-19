@@ -41,3 +41,13 @@ export function toBackendUrl(port: number, pathname: string, search: string): st
 export function isApiPath(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
 }
+
+
+/** Credential handoff is main-process IPC only, including encoded API paths. */
+export function isCloudControlPath(pathname: string): boolean {
+  try {
+    return decodeURIComponent(pathname).startsWith("/api/cloud");
+  } catch {
+    return true;
+  }
+}

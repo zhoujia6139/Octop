@@ -76,7 +76,34 @@ export const IPC_CHANNELS = {
   windowClose: "octop:window-close",
   windowIsMaximized: "octop:window-is-maximized",
   windowMaximized: "octop:window-maximized",
+  cloudLogin: "octop:cloud:login",
+  cloudMfa: "octop:cloud:mfa",
+  cloudBind: "octop:cloud:bind",
+  cloudRenew: "octop:cloud:renew",
+  cloudLogout: "octop:cloud:logout",
+  cloudCurrent: "octop:cloud:current",
   sessionRegister: "octop:session:register",
   sessionRenew: "octop:session:renew",
   sessionRevoke: "octop:session:revoke",
 } as const;
+
+
+export interface CloudIdentity {
+  cloud_id: string;
+  user: { user_id: number; username: string; role: "admin" | "user"; enabled: boolean; mfa_enabled: boolean };
+  device_id: string | null;
+  binding_generation: number | null;
+  timezone: string;
+}
+
+export interface CloudToken {
+  access_token: string;
+  token_type: "bearer";
+  expires_in: number;
+  identity: CloudIdentity;
+}
+
+export interface CloudSessionResult {
+  status: "mfa_required" | "ready_to_bind" | "bound";
+  identity?: CloudIdentity;
+}
