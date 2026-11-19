@@ -7,7 +7,13 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from octop_harness.config import ModelConfig, ProviderConfig
 from octop_harness.llm.factory import ChatModelFactory
@@ -51,7 +57,7 @@ class LocalModel(BaseChatModel):
     async def _astream(
         self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any
     ) -> AsyncIterator[ChatGenerationChunk]:
-        if "wait" in str(messages[-1].content):
+        if isinstance(messages[-1], HumanMessage) and "wait" in str(messages[-1].content):
             self._started.set()
             await asyncio.Future()
         message = self._reply(messages)

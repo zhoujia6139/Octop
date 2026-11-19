@@ -27,6 +27,7 @@ class LocalAgentInput(BaseModel):
 
 class LocalAgentView(LocalAgentInput):
     agent_id: PublicId
+    enabled: bool = True
 
 
 class ThreadView(BaseModel):

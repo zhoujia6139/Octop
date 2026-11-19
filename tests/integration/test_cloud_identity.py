@@ -588,6 +588,11 @@ async def test_production_local_requires_device_and_keeps_models_unavailable(clo
             json={"name": "No fallback", "model_id": "platform/model"},
             headers=LOCAL_HEADERS,
         )
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == "PLATFORM_MODEL_UNAVAILABLE"
+        # P4 permits durable drafts even when there is no usable model. This
+        # does not make the production execution service available.
+        assert response.status_code == 201
+        resources = (await local.get("/api/resources", headers=LOCAL_HEADERS)).json()
+        assert resources[0]["installed_revision"] is None
+        assert resources[0]["error_code"] == "PLATFORM_MODEL_UNAVAILABLE"
+        assert (await local.get("/api/agents", headers=LOCAL_HEADERS)).json() == []
         assert not (tmp_path / "production-local" / "local.db").exists()

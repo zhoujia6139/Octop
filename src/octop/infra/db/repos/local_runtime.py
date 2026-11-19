@@ -14,6 +14,10 @@ class LocalAgentRow:
     name: str
     model_id: str
     system_prompt: str | None
+    enabled: int = 1
+    resource_snapshot: str | None = None
+    skills_path: str | None = None
+    resource_id: str | None = None
 
 
 class LocalAgentRepo:
@@ -30,7 +34,7 @@ class LocalAgentRepo:
     def get(self, agent_id: str) -> LocalAgentRow | None:
         with self._db.connect() as conn:
             row = conn.execute(
-                "SELECT agent_id,name,model_id,system_prompt FROM local_agents WHERE agent_id=?",
+                "SELECT agent_id,name,model_id,system_prompt,enabled,resource_snapshot,skills_path,resource_id FROM local_agents WHERE agent_id=?",
                 (agent_id,),
             ).fetchone()
         return LocalAgentRow(**dict(row)) if row is not None else None
@@ -38,7 +42,7 @@ class LocalAgentRepo:
     def list(self) -> list[LocalAgentRow]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT agent_id,name,model_id,system_prompt FROM local_agents ORDER BY id"
+                "SELECT agent_id,name,model_id,system_prompt,enabled,resource_snapshot,skills_path,resource_id FROM local_agents ORDER BY id"
             ).fetchall()
         return [LocalAgentRow(**dict(row)) for row in rows]
 

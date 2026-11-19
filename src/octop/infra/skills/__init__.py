@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from octop.infra.skills.install import (
     SkillAlreadyExistsError,
     SkillInstallTarget,
@@ -11,7 +13,6 @@ from octop.infra.skills.install import (
     prepare_skillhub_package,
     resolve_url_import,
 )
-from octop.infra.skills.skill_package_store import SkillPackageStore
 from octop.infra.skills.skill_packages import (
     ResolvedSkillPackage,
     SkillPackageError,
@@ -21,6 +22,20 @@ from octop.infra.skills.skill_packages import (
     resolve_workspace_uploads,
     validate_skill_slug,
 )
+
+if TYPE_CHECKING:
+    from octop.infra.skills.skill_package_store import SkillPackageStore
+
+
+def __getattr__(name: str) -> Any:
+    # Pure package validation is also used by the cloud-only application.
+    # The legacy disk store imports Harness backends and must remain optional.
+    if name == "SkillPackageStore":
+        from octop.infra.skills.skill_package_store import SkillPackageStore
+
+        return SkillPackageStore
+    raise AttributeError(name)
+
 
 __all__ = [
     "ResolvedSkillPackage",

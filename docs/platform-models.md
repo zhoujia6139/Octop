@@ -4,7 +4,7 @@ P3 在独立云端应用中增加模型目录、授权、供应商凭证、原�
 
 ## 配置与启用
 
-启动、管理员初始化和桌面设备登录沿用 [cloud-identity.md](cloud-identity.md)。云端 schema 从 v2 升至 v3，SQLite/PostgreSQL 使用对应迁移。本地沿用账号隔离的 v1 schema。
+启动、管理员初始化和桌面设备登录沿用 [cloud-identity.md](cloud-identity.md)。P3 的 schema 为云端 v3、本地 v1；P4 已升级为云端 v4、本地 v2，SQLite/PostgreSQL 使用对应迁移，详见 [platform-resources.md](platform-resources.md)。
 
 默认没有供应商、模型、模型授权或预算，不能直接消费真实模型。管理员取得账号 access token 后依次操作：
 
@@ -38,7 +38,7 @@ P3 在独立云端应用中增加模型目录、授权、供应商凭证、原�
 }
 ```
 
-`GET /api/model-admin/providers` 和 `/api/model-admin/models` 为管理员提供配置查询。费率 revision 不可修改，变更价格必须使用新 revision；相同 revision 重复提交相同内容是幂等操作。费率尚未到 `effective_at` 的模型不在可用目录中。更新协议或降低输出上限后，已有本地实例可能需要重启来刷新模型客户端；服务端会拒绝不匹配当前能力或限制的请求，进行中请求仍保留原费率快照。P4 将接入运行配置在安全 turn 边界安装更新的流程。
+`GET /api/model-admin/providers` 和 `/api/model-admin/models` 为管理员提供配置查询。费率 revision 不可修改，变更价格必须使用新 revision；相同 revision 重复提交相同内容是幂等操作。费率尚未到 `effective_at` 的模型不在可用目录中。更新协议或降低输出上限后，已有本地实例可能需要重启来刷新模型客户端；服务端会拒绝不匹配当前能力或限制的请求，进行中请求仍保留原费率快照。P4 的资源安装会在安全 turn 边界切换配置；平台模型目录自身的协议/上限变化没有资源版本事件，已有 factory 仍可能需要通过资源新版本安装或重启刷新。
 
 `GET /api/models` 仅返回当前用户已授权的逻辑模型、原生协议、文本/图像/工具能力、上限及费率，不返回 routes、供应商地址、供应商模型名或凭证。只有管理员账号会话可以变更供应商、路由、授权和预算；设备授权不能代替管理权限。
 
@@ -57,7 +57,7 @@ P3 在独立云端应用中增加模型目录、授权、供应商凭证、原�
 
 云端调用使用 `POST /api/models/requests`，包含稳定 `request_id`、`agent_id/thread_id/turn_id`、逻辑 `model_id`、`purpose` 和原生 `payload`。purpose 支持 chat/subagent/summary/title/memory/embedding。设备身份与 binding generation 从服务端会话解析，不能从请求中指定。JSON 信封上限为 8 MiB；超过返回本地化的 413 错误。
 
-当前设备先通过 `POST /api/model-contexts` 注册个人 Agent、线程及 turn 的关联；公共 ID 一经归属不能被其他用户认领，也不能重挂到其他父资源。网关只接受已登记且归属当前用户的完整关联。这个表仅记录消费上下文，不发布 Agent，也不授予模型权限；P4 将接入正式平台资源、版本和分配校验，不能把本期登记接口当作平台 Agent 发布流程。
+当前设备先通过 `POST /api/model-contexts` 注册 Agent 运行实例、正式 `resource_id`、线程及 turn 的关联；个人 Agent 的资源 ID 可默认等于实例 ID，共享平台定义必须使用独立实例 ID。公共实例 ID 一经归属不能被其他用户认领，也不能重挂到其他父资源。P4 已接入正式资源所有权/当前设备分配校验，在登记、预占和 dispatch 前执行；消费上下文表自身不授予资源或模型权限。
 
 首次调用返回原生 JSON 或 SSE。同一用户、设备代次和内容的 request_id 重放返回 **202 + RequestView**，包含现有状态与 attempt，不重新调用上游；内容不同返回 409，其他用户的请求返回 404。首期没有流重放缓存，调用方应查询请求状态并显式决定下一步。
 
@@ -92,7 +92,7 @@ Harness 每次 HTTP 模型调用由本机中继分配独立 request_id，关联�
 
 云端同名 `/api/usage/*` 查询接受账号或设备授权，默认只看本人。管理员使用账号会话显式指定 `user_id` 才能查询他人。requests 可见失败、释放和待核对状态；summary 只聚合已结算的 attempt，按逻辑模型和币种分组，支持 `since`（含）与 `until`（不含）的 Unix 时间范围。
 
-P3 不改默认产品入口。Electron 调试仍使用 `--local-runtime`；登录、模型管理与费用的产品页面在 P6 接入。实际同步、资源发布及安装分别属于 P5/P4。
+P3 不改默认产品入口。Electron 调试仍使用 `--local-runtime`；登录、模型管理与费用的产品页面在 P6 接入。P4 已接入资源发布和安装，见 [platform-resources.md](platform-resources.md)；聊天/文件/记忆同步仍属于 P5。
 
 ## 验证
 

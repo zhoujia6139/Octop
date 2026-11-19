@@ -165,6 +165,14 @@ class LocalModels:
     ) -> LocalModelResponse:
         if self.closed:
             raise OctopError.localized(ErrorCode.AUTH_FAILED)
+        if self.runtime:
+            row = await asyncio.get_running_loop().run_in_executor(
+                None, self.runtime._storage().agents.get, context.agent_id
+            )
+            if row and row.resource_id:
+                if context.resource_id and context.resource_id != row.resource_id:
+                    raise OctopError.localized(ErrorCode.RESOURCE_NOT_ALLOWED)
+                context = context.model_copy(update={"resource_id": row.resource_id})
         token = await self.access(expected_identity=self.identity)
         model_id = payload.get("model", "")
         model_id = model_id if model_id.startswith("platform/") else "platform/" + model_id
@@ -244,6 +252,11 @@ class LocalModels:
         except ValueError:
             return None
         return OctopError.localized(code)
+
+    async def release_factory(self, factory: ChatModelFactory) -> None:
+        if factory in self._factories:
+            self._factories.remove(factory)
+            await factory.aclose()
 
     async def close(self) -> None:
         self.closed = True

@@ -140,6 +140,10 @@ class GrantInput(ModelInput):
 
 
 class ModelContext(ModelInput):
+    resource_id: PublicId | None = Field(
+        default=None,
+        description="Formal Agent definition; defaults to agent_id for personal resources.",
+    )
     agent_id: PublicId
     thread_id: PublicId
     turn_id: PublicId

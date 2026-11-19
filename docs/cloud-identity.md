@@ -1,6 +1,6 @@
 # 云端账号与桌面设备授权（P2）
 
-P2 在独立云端和本地应用上提供账号密码、TOTP MFA（含恢复码）、单设备绑定、撤销与账号数据隔离。首期登录方式已与用户确认，不迁入 SSO、LDAP 或 Passkey。产品登录页面与默认入口的切换在 P6，模型网关已在 P3 接入（见 [platform-models.md](platform-models.md)），实际 outbox 和同步传输在 P5。
+P2 在独立云端和本地应用上提供账号密码、TOTP MFA（含恢复码）、单设备绑定、撤销与账号数据隔离。首期登录方式已与用户确认，不迁入 SSO、LDAP 或 Passkey。产品登录页面与默认入口的切换在 P6，模型网关已在 P3 接入（见 [platform-models.md](platform-models.md)），P4 已接入资源 outbox 与版本分配（见 [platform-resources.md](platform-resources.md)），聊天/文件/记忆同步传输在 P5。
 
 ## 启动与初始化
 
@@ -53,7 +53,7 @@ Electron 为每次 sidecar 启动生成独立本机 API token。云端账号会�
 
 TOTP 秘钥复用现有 Fernet 密封能力；恢复码复用现有生成、规范化和 Argon2 校验。登录失败与 MFA 失败状态持久化，MFA 同时限制单个 challenge 与账号级尝试，换 challenge 不能绕过锁定。TOTP 时间步及恢复码在用户行锁保护下单次消费。所有身份响应禁止缓存，字段验证错误不回显提交的秘密。
 
-`CloudIdentity.authorized_device(token)` 是 P3/P5 的事务授权入口：在持有用户行锁的同一事务里检查当前 generation，再预占额度或提交同步写入。P2 测试验证当前设备、并发替换、过期与撤销的拒绝行为；真实模型预占和结算已在 P3 使用此入口实现，同步写入仍由 P5 实现，不能只校验客户端上报的 generation。
+`CloudIdentity.authorized_device(token)` 是 P3/P4/P5 的事务授权入口：在持有用户行锁的同一事务里检查当前 generation，再预占额度或提交同步写入。P2 测试验证当前设备、并发替换、过期与撤销的拒绝行为；真实模型预占和结算已在 P3 使用此入口实现，P4 资源写入已复用该入口，其他同步写入仍由 P5 实现，不能只校验客户端上报的 generation。
 
 ## 桌面凭证与账号目录
 
@@ -87,4 +87,4 @@ $OCTOP_HOME/local/accounts/<sha256(cloud_origin:cloud_id:user_id)>/
 - `desktop/src/main/session/cloud-session.test.ts`：加密保存、MFA 交接、重启续期、撤销、离线退出与续期/退出竞争。
 - `desktop/src/main/protocol/` 测试：编码控制路径拒绝、WS 上游本机凭证注入。
 
-实际验收结果记录在根目录 Plan.md。P3 网关与账本参见 [platform-models.md](platform-models.md)，P4 及之后阶段仍按计划实施。
+实际验收结果记录在根目录 Plan.md。P3 网关与账本参见 [platform-models.md](platform-models.md)，P4 资源发布与安装参见 [platform-resources.md](platform-resources.md)；P5 及之后阶段仍按计划实施。

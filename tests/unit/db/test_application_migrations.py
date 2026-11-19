@@ -20,8 +20,8 @@ def test_new_watermark_is_independent_of_legacy_version(tmp_path: Path):
         with db.transaction() as conn:
             conn.execute("CREATE TABLE _schema_version (version INTEGER)")
             conn.execute("INSERT INTO _schema_version VALUES (999)")
-        assert migrate_application(db, "cloud") == 3
-        assert migrate_application(db, "cloud") == 3
+        assert migrate_application(db, "cloud") == 4
+        assert migrate_application(db, "cloud") == 4
         with db.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 999
             conn.execute("UPDATE cloud_schema_version SET version=999")
@@ -67,8 +67,8 @@ def test_postgresql_schema_pairs_initialize_idempotently_and_reference_public_id
         try:
             db = PostgresPool(make_conninfo(dsn, options=f"-csearch_path={schema}"))
             for role in ("cloud", "local"):
-                assert migrate_application(db, role) == (3 if role == "cloud" else 1)
-                assert migrate_application(db, role) == (3 if role == "cloud" else 1)
+                assert migrate_application(db, role) == (4 if role == "cloud" else 2)
+                assert migrate_application(db, role) == (4 if role == "cloud" else 2)
             with db.transaction() as conn:
                 conn.execute(
                     "INSERT INTO local_agents(agent_id,name,model_id,created_at) VALUES ('agent-a','A','platform/model',1)"
@@ -104,13 +104,53 @@ def test_cloud_v2_identity_survives_model_ledger_upgrade(tmp_path: Path, monkeyp
             conn.execute(
                 "INSERT INTO cloud_users(username,password_hash,role) VALUES ('preserved','argon2-record','admin')"
             )
-        assert migrate_application(db, "cloud") == 3
-        assert migrate_application(db, "cloud") == 3
+        assert migrate_application(db, "cloud") == 4
+        assert migrate_application(db, "cloud") == 4
         with db.connect() as conn:
             assert conn.execute("SELECT username,password_hash FROM cloud_users").fetchone()[:] == (
                 "preserved",
                 "argon2-record",
             )
             assert conn.execute("SELECT COUNT(*) FROM cloud_model_requests").fetchone()[0] == 0
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("role,previous,current", [("cloud", 3, 4), ("local", 1, 2)])
+def test_resource_upgrade_preserves_prior_application_records(
+    tmp_path: Path, monkeypatch, role, previous, current
+):
+    from octop.infra.db import application_migrations
+
+    original = application_migrations._ROOT
+    old = tmp_path / "old"
+    (old / role).mkdir(parents=True)
+    for path in (original / role).glob("*.sql"):
+        if int(path.name[:3]) <= previous:
+            (old / role / path.name).write_bytes(path.read_bytes())
+    db = SqlitePool(tmp_path / "upgrade-resources.db")
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(application_migrations, "_ROOT", old)
+            assert migrate_application(db, role) == previous
+        with db.transaction() as conn:
+            if role == "cloud":
+                conn.execute(
+                    "INSERT INTO cloud_users(username,password_hash,role) VALUES ('preserved','argon-record','user')"
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO local_agents(agent_id,name,model_id,created_at) VALUES ('preserved','Old definition','platform/test',1)"
+                )
+        assert migrate_application(db, role) == current
+        assert migrate_application(db, role) == current
+        with db.connect() as conn:
+            if role == "cloud":
+                assert conn.execute("SELECT username FROM cloud_users").fetchone()[0] == "preserved"
+                assert conn.execute("SELECT COUNT(*) FROM cloud_resources").fetchone()[0] == 0
+            else:
+                assert conn.execute(
+                    "SELECT name,enabled,resource_snapshot FROM local_agents"
+                ).fetchone()[:] == ("Old definition", 1, None)
     finally:
         db.close()

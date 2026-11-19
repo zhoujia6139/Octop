@@ -12,6 +12,7 @@ from typing import Any
 from cryptography.fernet import Fernet
 
 from octop.infra.db.repos.cloud_models import CloudModelRepo, ModelTransaction
+from octop.infra.db.repos.cloud_resources import ResourceTransaction
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.identity.service import CloudIdentity
 from octop.infra.models.contracts import (
@@ -147,10 +148,27 @@ class ModelLedger:
     def register_context(self, token: str, body: ModelContext) -> None:
         with self.identity.authorized_device(token) as (identity_tx, principal):
             tx = ModelTransaction(identity_tx.conn)
+            identity_tx.setting("resource_management_lock", "1")
+            resources = ResourceTransaction(identity_tx.conn)
+            resource_id = body.resource_id or body.agent_id
+            existing = resources.execution_resource(body.agent_id)
+            resource = resources.resource(resource_id)
+            if not resources.agent_allowed(
+                resource_id,
+                principal.user.user_id,
+                principal.session.device_id,
+                principal.session.generation,
+            ):
+                raise fail()
+            if (existing and existing != resource_id) or (
+                resource and resource["scope"] == "platform" and body.agent_id == resource_id
+            ):
+                raise fail(ErrorCode.RESOURCE_INVALID)
             if not tx.register_context(
                 principal.user.user_id, body.agent_id, body.thread_id, body.turn_id
             ):
                 raise fail()
+            resources.bind_execution(body.agent_id, resource_id)
 
     def _view(self, tx: ModelTransaction, row: dict[str, Any]) -> RequestView:
         attempts = [
@@ -215,6 +233,17 @@ class ModelLedger:
                     None,
                     self._view(tx, previous),
                 )
+            identity_tx.setting("resource_management_lock", "1")
+            resources = ResourceTransaction(identity_tx.conn)
+            resource_id = resources.execution_resource(body.agent_id)
+            if (
+                not resource_id
+                or (body.resource_id and body.resource_id != resource_id)
+                or not resources.agent_allowed(
+                    resource_id, user_id, principal.session.device_id, principal.session.generation
+                )
+            ):
+                raise fail()
             if not tx.context_owned(user_id, body.agent_id, body.thread_id, body.turn_id):
                 raise fail()
             raw = tx.model(body.model_id)
@@ -275,6 +304,16 @@ class ModelLedger:
                 or request["user_id"] != principal.user.user_id
                 or request["device_id"] != principal.session.device_id
                 or request["generation"] != principal.session.generation
+            ):
+                raise fail()
+            identity_tx.setting("resource_management_lock", "1")
+            resources = ResourceTransaction(identity_tx.conn)
+            resource_id = resources.execution_resource(request["agent_id"])
+            if not resource_id or not resources.agent_allowed(
+                resource_id,
+                principal.user.user_id,
+                principal.session.device_id,
+                principal.session.generation,
             ):
                 raise fail()
             model = ModelDefinition.model_validate_json(request["definition"])

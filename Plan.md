@@ -1,6 +1,6 @@
 # Octop 桌面 Agent 与云端管理改造计划
 
-> 日期：2026-11-19。状态：P0、P1、P2、P3 已完成验收；当前停在 P4 之前。
+> 日期：2026-11-19。状态：P0、P1、P2、P3、P4 已完成验收；当前停在 P5 之前。
 >
 > 本次修订采用「基于 octop-harness 建立新的云端与桌面应用层，选择性迁入 Octop 成熟能力」的路线。本文记录已确认的产品边界，并给出后续实现顺序。勾选项表示实现与验收均完成；尚未验收的探索性代码不计为完成。模块名、接口名和表名是设计建议，实施时结合现有代码确定，不代表已存在。
 
@@ -308,17 +308,32 @@ P3 验收记录（2026-11-19）：
 - 后端验收：最终 `make all` 通过，6003 passed、82 skipped，Ruff/格式与 mypy（723 个源文件）通过。`uv run pytest tests/integration/test_platform_models.py tests/unit/models tests/unit/db/test_application_migrations.py -q -x --tb=short` 专项为 34 passed、28 skipped；全量跳过项按环境、平台及 Embedding 非流式合同处理。
 - 数据库验收：临时 PostgreSQL 17 实例下，`uv run pytest tests/integration/test_platform_models.py tests/integration/test_cloud_identity.py tests/unit/db/test_application_migrations.py tests/unit/models -q --tb=short` 为 81 passed、2 skipped；覆盖两种数据库的并发预占、幂等、费率快照、failover、核对、设备撤销、取消与账本恢复。两个跳过项为 Embedding 流式组合。测试 schema、容器和临时凭证均已清理。
 - 安装与界面边界：仅安装 cloud extra 的全新隔离环境，未安装四个执行库或 LangChain，实际验证模型调用、幂等重放与结算。Dashboard `npx tsc -b`、`make build-frontend` 通过；未修改 Electron 源码。Scalar HTML 及 OpenAPI summary、类型、鉴权与原生 JSON/SSE 响应定义已检查；本次 Playwright driver 未就绪，未完成浏览器渲染抽查。完整产品 GUI、OS keychain 和各平台原生安装器仍在 P7 验收范围内。
-- 文档与暂停点：[docs/platform-models.md](docs/platform-models.md) 记录配置顺序、协议矩阵、金额单位、保守预占、异常结算、接口与桌面接入限制；P2 文档与合同已同步更新。本轮停在 P4 之前，不提前实施资源发布/安装或 P5 同步；登录、模型管理及费用产品页面仍在 P6 接入。
+- 文档与暂停点：[docs/platform-models.md](docs/platform-models.md) 记录配置顺序、协议矩阵、金额单位、保守预占、异常结算、接口与桌面接入限制；P2 文档与合同已同步更新。P3 验收时停在 P4 之前，未提前实施资源发布/安装或 P5 同步；登录、模型管理及费用产品页面仍在 P6 接入。
 
 ### P4：Agent/skills 发布、分配与个人资源
 
-- [ ] 基于新资源 schema 实现 Agent/skills 定义、个人资源 CRUD、平台版本发布与设备分配，管理操作不调用 Harness；固定 Agent 所引用的 skills 版本。
-- [ ] 迁入 skills 包路径与内容校验、必要的安装能力，并为新版本存储编写适配；不搬入绑定旧服务器工作区的管理流程。
-- [ ] 桌面拉取、校验、暂存、安装并报告实际生效版本，在 turn 边界切换运行配置。
-- [ ] 实现本地个人创建、同步与编辑，以及平台资源复制为个人资源的操作。
-- [ ] 安装失败保留上一个完整版本，个人副本不随平台源更新而被覆盖。
+- [x] 基于新资源 schema 实现 Agent/skills 定义、个人资源 CRUD、平台版本发布与设备分配，管理操作不调用 Harness；固定 Agent 所引用的 skills 版本。
+- [x] 迁入 skills 包路径与内容校验、必要的安装能力，并为新版本存储编写适配；不搬入绑定旧服务器工作区的管理流程。
+- [x] 桌面拉取、校验、暂存、安装并报告实际生效版本，在 turn 边界切换运行配置。
+- [x] 实现本地个人创建、同步与编辑，以及平台资源复制为个人资源的操作。
+- [x] 安装失败保留上一个完整版本，个人副本不随平台源更新而被覆盖。
 
 验收：管理员发布后目标设备可运行指定版本；未分配用户无法获取资源；本地创建可上传为个人资源；平台更新、重复拉取与安装失败均不破坏个人修改或当前完整安装。
+
+P4 验收记录（2026-11-19）：
+
+- 云端：新增 `infra/resources/` 合同与领域服务、SQL-only resource transaction 和薄 HTTP 适配。cloud v4 / local v2 各有 SQLite/PostgreSQL 双 SQL 迁移，保留前期身份与账本记录，另外验证 v3/v1 升级及重复初始化；不装配旧服务器或 Agent 管理器。
+- 发布与分配：资源定义、不可变修订、发布状态、设备分配和实际回执分开保存。平台草稿需显式发布再分配，Agent 固定 skills 的具体已发布修订；发布不会暗中更新已有分配。分配绑定当前设备及 generation，替换设备不继承旧分配。删除写入 tombstone，历史版本和消费账本保留。
+- 权限与个人资源：管理员账号会话负责平台发布/分配，当前设备负责个人 CRUD。服务端在身份事务内核对所有权、修订、幂等 ID 与资源额度；不能通过相同摘要、任意资源 ID 或设备会话取得其他用户内容。平台修改必须新建个人 ID，记录来源；复制 Agent 会生成稳定 ID 的个人 skills 快照，源更新或撤销不覆盖已接受的个人副本。
+- 消费关联：共享平台定义和账号内本地运行实例分别标识，避免不同用户共用同一个消费 Agent ID。P3 登记、预算预占及 dispatch 前检查正式资源所有权/当前设备分配；消费上下文记录本身不再能作为授权依据。配置不能提供供应商 Key、本机路径或降低工具审批要求。
+- skills：直接复用现有 `skill_packages.py` 的规范化，再校验清单/单文件摘要、UTF-8 manifest、跨平台路径、大小写/Unicode 规范化冲突与文件/目录碰撞；不使用旧工作区 Store。旧 `SkillPackageStore` 改为按需导入，使纯校验不引入 Harness。首期为有界文件清单：单 skill 最多 256 文件、合计 4 MiB，Agent 最多 32 个固定依赖，两端 JSON 包络最多 8 MiB；个人最多 100 个有效资源及 64 MiB 云端历史内容，删除不受存储额度耗尽阻碍。
+- 桌面：账号内持久化草稿、不可变包缓存、资源 outbox 与配置游标，先落库后上传；稳定 operation ID 覆盖响应丢失与重启，冲突保留本地内容而不静默覆盖，干净本地副本可应用云端 tombstone。正常拉取不自动恢复新安装上的个人资源，`restore_personal=true` 为显式资源恢复。后台任务只同步资源，不是用户定时任务；聊天、文件和记忆 outbox 仍在 P5。
+- 安装：通过 `HarnessAgent.workspace` 将固定 skills 写入新的系统暂存树并逐文件回读，完整成功后事务切换运行配置/安装快照；失败保留旧实例与完整目录。运行中或等待工具审批时延后，新 turn 开始前再应用；原审批继续使用原版本。保留工作区和检查点，不自动重放旧任务。退出/撤销停止资源授权与传输，等待在途转换后关闭数据库，异步退役避免安装/模型回调自等待。
+- 联调：除 stub 下的发布安装、个人 CRUD/复制、离线/响应丢失/重启、删除/并发额度、损坏下载和安装失败、运行/审批边界与撤销外，两个真实 uvicorn 监听端口验证了已分配平台 Agent 的实际 Harness/SDK「模型 → 本地 read_file → 模型」和两次独立结算；未使用真实付费供应商。
+- 后端验收：最终 `make all` 通过，6054 passed、103 skipped；Ruff/格式与 mypy（731 个源文件）通过。最终资源与包专项 `uv run pytest tests/integration/test_platform_resources.py tests/unit/resources -q -x --tb=short` 为 49 passed、21 skipped；跳过项为未设置 PG 环境的参数化用例，已另行实测。身份、模型、独立应用、迁移与 i18n 的组合回归另有 182 passed、57 skipped，之后新增的删除/额度和 Unicode 碰撞用例均已纳入最终全量检查。
+- 数据库与隔离验收：临时 PostgreSQL 17 下 `uv run pytest tests/integration/test_platform_resources.py tests/integration/test_platform_models.py tests/integration/test_cloud_identity.py tests/unit/db/test_application_migrations.py tests/unit/resources -q -x --tb=short` 为 147 passed、2 skipped，含 SQLite/PG 两种数据库；两个跳过项为 Embedding 流式组合。仅安装 cloud extra 的全新环境没有 Harness、Memory、Browser、Gateway 或 LangChain，实际完成发布、分配、固定依赖下载、实例授权与 schema/OpenAPI 检查；测试 schema、容器及临时凭证已清理。
+- 前端与文档：仅增加错误码的 zh/en 文案，Dashboard `npx tsc -b`、`npm run lint`（0 errors、75 条现有 warnings）和 `make build-frontend` 通过；未修改 Electron 或产品页面。Scalar HTML、OpenAPI 的 summaries、请求/响应类型及鉴权已检查；本轮未宣称完成 GUI 渲染、OS keychain 或原生安装器验收，Linux/Windows 实机/CI 与产品集成仍按 P7 验收。配置与接口见 [docs/platform-resources.md](docs/platform-resources.md)，身份、模型和共享合同文档已同步更新。
+- 暂停点：P4 完成，停在 P5 之前。P5 聊天/文件/记忆同步、P6 页面与默认入口退役、P7 完整产品及打包验收仍未开始；未提交或推送代码。
 
 ### P5：聊天、文件与记忆可靠同步
 

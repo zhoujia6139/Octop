@@ -7,8 +7,25 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from scalar_fastapi import get_scalar_api_reference
 
-from octop.infra.errors import OctopError
+from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.locale import resolve_request_locale
+
+
+async def bounded_json_body(request: Request, code: ErrorCode) -> JSONResponse | None:
+    """Bound JSON envelopes before parsing embedded model/skill file content."""
+    size = 0
+    chunks = []
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > 8 * 1024 * 1024:
+            return JSONResponse(
+                OctopError.localized(code).to_envelope(locale=resolve_request_locale(request)),
+                status_code=413,
+                headers={"Cache-Control": "no-store"},
+            )
+        chunks.append(chunk)
+    request._body = b"".join(chunks)
+    return None
 
 
 def configure_http(app: FastAPI, *, api_docs: bool) -> None:

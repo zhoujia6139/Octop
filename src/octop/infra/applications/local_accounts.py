@@ -42,6 +42,7 @@ class LocalAccounts:
         self._access_token: str | None = None
         self._expires_at = 0.0
         self._lock = asyncio.Lock()
+        self._retiring: asyncio.Task[None] | None = None
         self._client = httpx.AsyncClient(
             transport=cloud_transport, trust_env=False, follow_redirects=False, timeout=10
         )
@@ -65,7 +66,21 @@ class LocalAccounts:
                 finally:
                     self.started = False
 
+    def _retire_revoked(self) -> None:
+        # Revocation can be discovered inside an installation/model callback.
+        # Clear authority immediately, then retire outside that callback's task
+        # so cleanup never awaits a parent that is waiting for this callback.
+        self.identity = None
+        self._access_token = None
+        self._expires_at = 0
+        if self.runtime:
+            previous, self.runtime = self.runtime, None
+            self._retiring = asyncio.create_task(previous.close(close_model_factory=False))
+
     async def _detach(self) -> None:
+        if self._retiring:
+            retiring, self._retiring = self._retiring, None
+            await retiring
         self.identity = None
         self._access_token = None
         self._expires_at = 0
@@ -136,6 +151,17 @@ class LocalAccounts:
             self.identity = verified
             self._access_token = grant.access_token
             self._expires_at = time.monotonic() + min(grant.expires_in, 300)
+            if self.runtime and self.runtime.resources is None and self.settings.cloud_url:
+                from octop.infra.resources.local import LocalResources
+
+                self.runtime.resources = LocalResources(
+                    self.runtime,
+                    client=self._client,
+                    cloud_url=self.settings.cloud_url,
+                    identity=verified,
+                    access=self.device_access,
+                )
+                self.runtime.resources.start()
             return verified
 
     def require_runtime(self) -> LocalApplication:
@@ -160,9 +186,9 @@ class LocalAccounts:
                 verified = await self._validate(self._access_token)
             except OctopError as exc:
                 if exc.code == ErrorCode.DEVICE_REVOKED:
-                    await self._detach()
+                    self._retire_revoked()
                 raise
             if verified != self.identity:
-                await self._detach()
+                self._retire_revoked()
                 raise OctopError.localized(ErrorCode.DEVICE_REVOKED)
             return self._access_token

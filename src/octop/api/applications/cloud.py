@@ -7,16 +7,16 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
-from octop.api.applications.common import configure_http
+from octop.api.applications.common import bounded_json_body, configure_http
 from octop.api.applications.identity import router as identity_router
 from octop.api.applications.models import router as models_router
+from octop.api.applications.resources import router as resources_router
 from octop.application_config import CloudSettings
 from octop.infra.applications.cloud import CloudApplication
 from octop.infra.applications.contracts import Health
-from octop.infra.errors import ErrorCode, OctopError
-from octop.infra.utils.locale import resolve_request_locale
+from octop.infra.errors import ErrorCode
 
 
 def create_cloud_app(
@@ -36,6 +36,10 @@ def create_cloud_app(
         title="Octop Cloud API",
         description="Cloud accounts and single-device authorization. Initialize the first administrator with octop-cloud-init; use password and optional TOTP MFA to obtain a short-lived account session.",
         openapi_tags=[
+            {
+                "name": "resources",
+                "description": "Immutable Agent/skill versions, current-device assignments, personal resources and installation receipts.",
+            },
             {
                 "name": "auth",
                 "description": "Password/TOTP accounts, purpose-scoped sessions and single-device authorization.",
@@ -61,28 +65,22 @@ def create_cloud_app(
     )
     app.include_router(identity_router)
     app.include_router(models_router)
+    app.include_router(resources_router)
 
     @app.middleware("http")
     async def protect_credentials(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path == "/api/models/requests":
-            # Read incrementally before Pydantic JSON parsing to bound model
-            # input memory, including base64 multimodal payloads.
-            size = 0
-            chunks = []
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > 8 * 1024 * 1024:
-                    return JSONResponse(
-                        OctopError.localized(ErrorCode.MODEL_REQUEST_TOO_LARGE).to_envelope(
-                            locale=resolve_request_locale(request)
-                        ),
-                        status_code=413,
-                        headers={"Cache-Control": "no-store"},
-                    )
-                chunks.append(chunk)
-            request._body = b"".join(chunks)
+        if request.url.path == "/api/models/requests" or request.url.path.startswith(
+            ("/api/resources/", "/api/resource-admin/")
+        ):
+            code = (
+                ErrorCode.MODEL_REQUEST_TOO_LARGE
+                if request.url.path == "/api/models/requests"
+                else ErrorCode.ATTACHMENT_TOO_LARGE
+            )
+            if rejected := await bounded_json_body(request, code):
+                return rejected
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         return response

@@ -1,0 +1,70 @@
+CREATE TABLE cloud_resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL CHECK(scope IN ('platform','personal')),
+    kind TEXT NOT NULL CHECK(kind IN ('agent','skill')),
+    owner_id INTEGER REFERENCES cloud_users(user_id),
+    revision INTEGER NOT NULL,
+    published_revision INTEGER,
+    source_id TEXT REFERENCES cloud_resources(resource_id),
+    source_revision INTEGER,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    CHECK((scope='platform' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL))
+);
+CREATE TABLE cloud_resource_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_id TEXT NOT NULL UNIQUE,
+    resource_id TEXT NOT NULL REFERENCES cloud_resources(resource_id),
+    revision INTEGER NOT NULL,
+    spec TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    published INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(resource_id,revision)
+);
+CREATE TABLE cloud_resource_dependencies (
+    resource_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    skill_revision INTEGER NOT NULL,
+    PRIMARY KEY(resource_id,revision,skill_id),
+    FOREIGN KEY(resource_id,revision) REFERENCES cloud_resource_versions(resource_id,revision),
+    FOREIGN KEY(skill_id,skill_revision) REFERENCES cloud_resource_versions(resource_id,revision)
+);
+CREATE TABLE cloud_resource_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assignment_id TEXT NOT NULL UNIQUE,
+    resource_id TEXT NOT NULL REFERENCES cloud_resources(resource_id),
+    user_id INTEGER NOT NULL REFERENCES cloud_users(user_id),
+    device_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    revision INTEGER,
+    UNIQUE(resource_id,device_id,generation),
+    FOREIGN KEY(resource_id,revision) REFERENCES cloud_resource_versions(resource_id,revision)
+);
+CREATE TABLE cloud_resource_changes (
+    cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES cloud_users(user_id),
+    device_id TEXT,
+    generation INTEGER,
+    resource_id TEXT NOT NULL REFERENCES cloud_resources(resource_id),
+    revision INTEGER
+);
+CREATE INDEX cloud_resources_user_cursor ON cloud_resource_changes(user_id,cursor);
+CREATE TABLE cloud_resource_operations (
+    user_id INTEGER NOT NULL REFERENCES cloud_users(user_id),
+    operation_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    result TEXT NOT NULL,
+    PRIMARY KEY(user_id,operation_id)
+);
+CREATE TABLE cloud_resource_reports (
+    device_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES cloud_users(user_id),
+    resource_id TEXT NOT NULL REFERENCES cloud_resources(resource_id),
+    report TEXT NOT NULL,
+    PRIMARY KEY(device_id,generation,resource_id)
+);
+
+ALTER TABLE cloud_model_agents ADD COLUMN resource_id TEXT REFERENCES cloud_resources(resource_id);

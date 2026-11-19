@@ -120,8 +120,8 @@ async def budgets(gateway: Gateway, token: Token, user_id: int | None = None) ->
 @router.post(
     "/model-contexts",
     status_code=204,
-    summary="Register an owned personal Agent/thread/turn execution context",
-    description="Current device only. Registers ownership and associations, not a published Agent or a model permission. Platform resource publication and assignment belong to P4.",
+    summary="Register an authorized Agent instance/thread/turn execution context",
+    description="Current device only. Requires an owned personal Agent or current platform assignment. Shared definitions use distinct account-local instance IDs. Registers consumption associations without granting resource or model permissions.",
 )
 async def context(body: ModelContext, gateway: Gateway, token: Token) -> Response:
     await offload(gateway.ledger.register_context, token, body)

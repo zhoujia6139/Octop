@@ -461,6 +461,17 @@ async def platform(cloud):
 
     await configure()
     context = {"agent_id": new_ulid(), "thread_id": new_ulid(), "turn_id": new_ulid()}
+    # P4 consumption contexts require a formal personal or assigned Agent.
+    created = await client.put(
+        "/api/resources/personal/" + context["agent_id"],
+        headers=headers(device),
+        json={
+            "operation_id": new_ulid(),
+            "expected_revision": 0,
+            "spec": {"kind": "agent", "name": "Test", "model_id": "platform/test"},
+        },
+    )
+    assert created.status_code == 200, created.text
     assert (
         await client.post("/api/model-contexts", headers=headers(device), json=context)
     ).status_code == 204

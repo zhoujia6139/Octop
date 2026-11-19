@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from starlette.background import BackgroundTask
 
-from octop.api.applications.common import configure_http
+from octop.api.applications.common import bounded_json_body, configure_http
+from octop.api.applications.local_resources import router as resources_router
 from octop.application_config import LocalSettings
 from octop.infra.applications.contracts import (
     Health,
@@ -104,6 +105,7 @@ def create_local_app(
         redoc_url=None,
         openapi_url="/api/openapi.json" if settings.enable_api_docs else None,
     )
+    app.include_router(resources_router)
     app.state.accounts = accounts
     app.state.local = accounts.runtime
     configure_http(app, api_docs=settings.enable_api_docs)
@@ -135,6 +137,10 @@ def create_local_app(
             return JSONResponse(
                 error.to_envelope(locale=resolve_request_locale(request)), status_code=401
             )
+        if request.url.path.startswith("/api/resources") and (
+            rejected := await bounded_json_body(request, ErrorCode.ATTACHMENT_TOO_LARGE)
+        ):
+            return rejected
         return await call_next(request)
 
     @app.get(
@@ -144,7 +150,7 @@ def create_local_app(
         return Health(
             role="local",
             ok=accounts.started,
-            schema_version=accounts.runtime.schema_version if accounts.runtime else 1,
+            schema_version=accounts.runtime.schema_version if accounts.runtime else 2,
         )
 
     @app.get(
