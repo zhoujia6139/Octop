@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Button,
@@ -174,6 +181,7 @@ function Chat({
   records,
   reload,
   enabled,
+  agentSelector,
 }: {
   api: ProductApi;
   identity: Identity;
@@ -181,6 +189,7 @@ function Chat({
   records: LocalRecord[];
   reload(): Promise<void>;
   enabled: boolean;
+  agentSelector: ReactNode;
 }) {
   const { t } = useTranslation();
   const translate = useRef(t);
@@ -300,6 +309,7 @@ function Chat({
   return (
     <div className="product-chat">
       <Card
+        className="product-chat-sidebar"
         size="small"
         title={t("product.conversations")}
         extra={
@@ -319,24 +329,46 @@ function Chat({
           </Button>
         }
       >
+        <div className="product-chat-agent">{agentSelector}</div>
         <List
+          className="product-chat-threads"
           dataSource={threads}
           locale={{ emptyText: t("product.noChats") }}
           renderItem={(row) => (
             <List.Item>
               <Button
                 type={row.item_id === thread ? "primary" : "text"}
+                aria-current={row.item_id === thread ? "true" : undefined}
+                title={row.data.title || t("product.untitledChat")}
                 block
                 disabled={active && row.item_id !== thread}
                 onClick={() => setThread(row.item_id)}
               >
-                {row.data.title || t("product.untitledChat")}
+                <span className="product-chat-thread-title">
+                  {row.data.title || t("product.untitledChat")}
+                </span>
               </Button>
             </List.Item>
           )}
         />
       </Card>
       <div className="product-stack product-chat-main">
+        <div className="product-chat-heading">
+          <Typography.Text strong ellipsis>
+            {thread
+              ? latest?.data.title || t("product.untitledChat")
+              : t("product.nav.chat")}
+          </Typography.Text>
+          {thread && (
+            <Tag className="product-status">
+              {t(
+                `product.states.${
+                  status ?? latest?.data.status ?? "completed"
+                }`,
+              )}
+            </Tag>
+          )}
+        </div>
         {error && (
           <Alert
             type="error"
@@ -354,16 +386,11 @@ function Chat({
           <Alert type="warning" message={t("product.archiveOnly")} />
         )}
         {!thread ? (
-          <Empty description={t("product.selectChat")} />
+          <div className="product-chat-empty">
+            <Empty description={t("product.selectChat")} />
+          </div>
         ) : (
           <>
-            <Tag className="product-status">
-              {t(
-                `product.states.${
-                  status ?? latest?.data.status ?? "completed"
-                }`,
-              )}
-            </Tag>
             {(status ?? latest?.data.status) === "interrupted" && (
               <Alert type="warning" message={t("product.interruptedHelp")} />
             )}
@@ -407,7 +434,11 @@ function Chat({
               )}
             </div>
             {status === "awaiting_approval" && (
-              <Card title={t("product.approvalRequired")}>
+              <Card
+                className="product-chat-approval"
+                size="small"
+                title={t("product.approvalRequired")}
+              >
                 {approval.map((action, index) => (
                   <div key={index}>
                     <Typography.Text strong>
@@ -447,86 +478,96 @@ function Chat({
                 </Space>
               </Card>
             )}
-            <Input.TextArea
-              aria-label={t("product.message")}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={t("product.messagePlaceholder")}
-              rows={3}
-              maxLength={100000}
-              disabled={!enabled || active}
-            />
-            <Space wrap>
-              <input
-                aria-label={t("product.attachFiles")}
-                type="file"
-                multiple
-                disabled={!enabled || active || uploading}
-                onChange={async (event) => {
-                  const files = Array.from(event.target.files ?? []);
-                  event.target.value = "";
-                  setUploading(true);
-                  try {
-                    const saved: LocalRecord[] = [];
-                    for (const file of files) {
-                      if (file.size > 256 * 1024 * 1024)
-                        throw new Error("ATTACHMENT_TOO_LARGE");
-                      saved.push(await api.upload(agent, file));
-                    }
-                    setAttachments((before) => [...before, ...saved]);
-                    await reload();
-                  } catch (err) {
-                    setError(errorText(err));
-                  } finally {
-                    setUploading(false);
-                  }
-                }}
+            <div className="product-chat-composer">
+              <Input.TextArea
+                aria-label={t("product.message")}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={t("product.messagePlaceholder")}
+                autoSize={{ minRows: 2, maxRows: 6 }}
+                maxLength={100000}
+                disabled={!enabled || active}
               />
-              <Button
-                type="primary"
-                disabled={
-                  !enabled || !connected || active || !text.trim() || uploading
-                }
-                onClick={() => {
-                  send({
-                    type: "start",
-                    text,
-                    attachment_ids: attachments.map((r) => r.item_id),
-                  });
-                  setText("");
-                  setAttachments([]);
-                  setStatus("running");
-                }}
-              >
-                {t("product.send")}
-              </Button>
-              {active && (
-                <Button
-                  danger
-                  disabled={!connected}
-                  onClick={() => send({ type: "cancel" })}
-                >
-                  {t("product.cancel")}
-                </Button>
+              <div className="product-chat-actions">
+                <input
+                  aria-label={t("product.attachFiles")}
+                  type="file"
+                  multiple
+                  disabled={!enabled || active || uploading}
+                  onChange={async (event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = "";
+                    setUploading(true);
+                    try {
+                      const saved: LocalRecord[] = [];
+                      for (const file of files) {
+                        if (file.size > 256 * 1024 * 1024)
+                          throw new Error("ATTACHMENT_TOO_LARGE");
+                        saved.push(await api.upload(agent, file));
+                      }
+                      setAttachments((before) => [...before, ...saved]);
+                      await reload();
+                    } catch (err) {
+                      setError(errorText(err));
+                    } finally {
+                      setUploading(false);
+                    }
+                  }}
+                />
+                <Space wrap>
+                  <Button
+                    type="primary"
+                    disabled={
+                      !enabled ||
+                      !connected ||
+                      active ||
+                      !text.trim() ||
+                      uploading
+                    }
+                    onClick={() => {
+                      send({
+                        type: "start",
+                        text,
+                        attachment_ids: attachments.map((r) => r.item_id),
+                      });
+                      setText("");
+                      setAttachments([]);
+                      setStatus("running");
+                    }}
+                  >
+                    {t("product.send")}
+                  </Button>
+                  {active && (
+                    <Button
+                      danger
+                      disabled={!connected}
+                      onClick={() => send({ type: "cancel" })}
+                    >
+                      {t("product.cancel")}
+                    </Button>
+                  )}
+                </Space>
+              </div>
+              {attachments.length > 0 && (
+                <Space wrap>
+                  {attachments.map((row) => (
+                    <Tag
+                      key={row.item_id}
+                      closable
+                      onClose={() =>
+                        setAttachments((before) =>
+                          before.filter((r) => r.item_id !== row.item_id),
+                        )
+                      }
+                    >
+                      {row.data?.kind === "file"
+                        ? row.data.path.split("/").pop()
+                        : ""}
+                    </Tag>
+                  ))}
+                </Space>
               )}
-            </Space>
-            <Space wrap>
-              {attachments.map((row) => (
-                <Tag
-                  key={row.item_id}
-                  closable
-                  onClose={() =>
-                    setAttachments((before) =>
-                      before.filter((r) => r.item_id !== row.item_id),
-                    )
-                  }
-                >
-                  {row.data?.kind === "file"
-                    ? row.data.path.split("/").pop()
-                    : ""}
-                </Tag>
-              ))}
-            </Space>
+            </div>
           </>
         )}
       </div>
@@ -589,33 +630,36 @@ export function DesktopWorkspace({
     }
   };
   const local = agents.data.find((row) => row.agent_id === agent);
+  const agentSelector = (
+    <Select
+      aria-label={t("product.agent")}
+      value={agent || undefined}
+      placeholder={t("product.selectAgent")}
+      onChange={setAgent}
+      options={agents.data.map((row) => ({
+        value: row.agent_id,
+        label: row.name + (row.enabled ? "" : ` · ${t("product.archive")}`),
+      }))}
+    />
+  );
   return (
     <div
       className={`product-stack${
         section === "chat" ? " product-chat-workspace" : ""
       }`}
     >
-      <Typography.Title level={3}>
-        {t(`product.nav.${section}`)}
-      </Typography.Title>
+      {section !== "chat" && (
+        <Typography.Title level={3}>
+          {t(`product.nav.${section}`)}
+        </Typography.Title>
+      )}
       {(error || agents.error || records.error || sync.error) && (
         <Alert
           type="error"
           message={error || agents.error || records.error || sync.error}
         />
       )}
-      {section !== "sync" && (
-        <Select
-          aria-label={t("product.agent")}
-          value={agent || undefined}
-          placeholder={t("product.selectAgent")}
-          onChange={setAgent}
-          options={agents.data.map((row) => ({
-            value: row.agent_id,
-            label: row.name + (row.enabled ? "" : ` · ${t("product.archive")}`),
-          }))}
-        />
-      )}
+      {section === "files" && agentSelector}
       {section === "chat" && local && (
         <Chat
           key={agent}
@@ -625,6 +669,7 @@ export function DesktopWorkspace({
           records={records.data}
           reload={records.reload}
           enabled={local.enabled}
+          agentSelector={agentSelector}
         />
       )}
       {section === "chat" && !agents.data.length && (

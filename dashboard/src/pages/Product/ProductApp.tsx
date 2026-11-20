@@ -370,7 +370,13 @@ function Product() {
         <DesktopChromeProvider value={chrome}>
           <DesktopWindowDragBand />
           <WindowsAppMenu />
-          <div className="product-root">
+          <div
+            className={`product-root${
+              role === "local" && location.pathname === "/chat"
+                ? " product-chat-shell"
+                : ""
+            }`}
+          >
             <Layout>
               <Layout.Header className="product-header">
                 <Typography.Title level={4}>Octop</Typography.Title>
