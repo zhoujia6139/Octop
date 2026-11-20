@@ -1,156 +1,122 @@
 name: CI
-
-# Pull requests only. GitHub runs PR checks on the merge result, so a push
-# build on main would re-test content that the release / feature PR already
-# proved green.
 on:
   pull_request:
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  quality:
-    name: "Python ${{ matrix.python-version }}"
-    runs-on: ubuntu-latest
-    # Post-release main → develop sync PRs carry main's already-tested tree and
-    # are auto-merged by the bot before checks finish. See sync-main-to-develop.
-    if: ${{ !startsWith(github.head_ref, 'chore/sync-develop-after-') }}
+  product:
+    name: Product / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: make install
-
-      - name: Lint
-        run: make lint
-
-      - name: Type check
-        run: make typecheck
-
-      - name: Test
-        run: make test
-
-  helm:
-    name: Helm chart
-    runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.head_ref, 'chore/sync-develop-after-') }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
         with:
-          version: v3.17.3
-
-      - name: Lint and render
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: uv sync --frozen
+      - run: make lint typecheck
+      - name: Vendored Harness checks
+        working-directory: vendor/octop-harness
+        run: |
+          uv run --project ../.. ruff check src tests
+          uv run --project ../.. ruff format --check src tests
+          uv run --project ../.. mypy src
+          uv run --project ../.. pytest -c pyproject.toml tests/test_workspace_sync.py tests/test_memory_shutdown.py -q
+      - name: Vendored Memory checks
+        working-directory: vendor/octop-memory
+        run: |
+          uv run --project ../.. ruff check src tests
+          uv run --project ../.. ruff format --check src tests
+          uv run --project ../.. mypy src
+      - run: make build-frontend
+      - run: make test-product
+      - name: Product frontend checks
+        working-directory: dashboard
+        run: |
+          npx tsc -b
+          npm run lint
+          npm test -- src/api/product/client.test.ts src/pages/Product/ProductApp.test.tsx src/pages/Product/Workspace.test.tsx
+      - run: make build-wheel
+      - name: Install actual wheels into separate cloud and local environments
         run: |
           set -euo pipefail
-          helm lint deploy/helm/octop
-          helm template octop deploy/helm/octop -n octop >/dev/null
-          helm template octop deploy/helm/octop -n octop \
-            -f deploy/helm/octop/values.example.yaml >/dev/null
-          helm template octop deploy/helm/octop -n octop \
-            --set postgresql.enabled=false \
-            --set database.host=pg.example.com >/dev/null
-          if helm template octop deploy/helm/octop -n octop --set postgresql.enabled=false >/dev/null 2>/tmp/helm-err; then
-            echo "expected a missing database.host to fail"
-            exit 1
-          fi
-
-  test-windows:
-    name: Windows / Python 3.12
-    runs-on: windows-latest
-    if: ${{ !startsWith(github.head_ref, 'chore/sync-develop-after-') }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: make install
-
-      - name: Lint
-        run: make lint
-
-      - name: Type check
-        run: make typecheck
-
-      - name: Test
-        run: make test
-
-  live-tests:
-    name: "Live tests (real credentials)"
+          for role in cloud local-runtime; do
+            uv venv ".verify/$role"
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              py=".verify/$role/Scripts/python.exe"
+            else
+              py=".verify/$role/bin/python"
+            fi
+            uv pip install --python "$py" --find-links dist/product -r "dist/product/requirements-$role.txt"
+            if [[ "$role" == local-runtime ]]; then
+              uv pip install --python "$py" --no-deps dist/product/octop_harness-*.whl dist/product/octop_memory-*.whl
+            fi
+            uv pip install --python "$py" --no-deps dist/product/octop-*.whl
+            mode="$role"
+            [[ "$role" != local-runtime ]] || mode=local
+            "$py" scripts/verify_product_install.py --role "$mode"
+          done
+  postgres:
+    name: Product transactions / PostgreSQL 17
     runs-on: ubuntu-latest
-    # Only the main repo may access secrets; fork PRs get none and must skip.
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      !startsWith(github.head_ref, 'chore/sync-develop-after-')
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: octop_test
+          POSTGRES_PASSWORD: test_only_password
+          POSTGRES_DB: octop_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U octop_test'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      OCTOP_TEST_DATABASE_URL: postgresql://octop_test:test_only_password@localhost:5432/octop_test
+      TEST_POSTGRES_DSN: postgresql://octop_test:test_only_password@localhost:5432/octop_test
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v4
         with:
-          enable-cache: true
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: make install
-
-      # Secrets are injected as env vars. Missing secrets => empty values =>
-      # the live tests auto-skip (CI stays green). Never `echo`/print secrets.
-      - name: Run live tests
-        env:
-          OPENAI_API_KEY: ${{ secrets.LIVE_OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.LIVE_OPENAI_BASE_URL }}
-          OPENAI_MODEL_NAME: ${{ secrets.LIVE_OPENAI_MODEL_NAME }}
-          OSS_KIND: ${{ secrets.LIVE_OSS_KIND }}
-          OSS_ENDPOINT: ${{ secrets.LIVE_OSS_ENDPOINT }}
-          OSS_ACCESS_KEY: ${{ secrets.LIVE_OSS_ACCESS_KEY }}
-          OSS_SECRET_KEY: ${{ secrets.LIVE_OSS_SECRET_KEY }}
-          OSS_BUCKET: ${{ secrets.LIVE_OSS_BUCKET }}
-          OSS_REGION: ${{ secrets.LIVE_OSS_REGION }}
-          OSS_PREFIX: ${{ secrets.LIVE_OSS_PREFIX }}
-          ALI_OSS_KIND: ${{ secrets.LIVE_ALI_OSS_KIND }}
-          ALI_OSS_ENDPOINT: ${{ secrets.LIVE_ALI_OSS_ENDPOINT }}
-          ALI_OSS_ACCESS_KEY: ${{ secrets.LIVE_ALI_OSS_ACCESS_KEY }}
-          ALI_OSS_SECRET_KEY: ${{ secrets.LIVE_ALI_OSS_SECRET_KEY }}
-          ALI_OSS_BUCKET: ${{ secrets.LIVE_ALI_OSS_BUCKET }}
-          ALI_OSS_REGION: ${{ secrets.LIVE_ALI_OSS_REGION }}
-          ALI_OSS_PREFIX: ${{ secrets.LIVE_ALI_OSS_PREFIX }}
-          CONNECTOR_TENCENT_DOCS_TOKEN: ${{ secrets.LIVE_CONNECTOR_TENCENT_DOCS_TOKEN }}
-          CONNECTOR_TENCENT_MEETING_TOKEN: ${{ secrets.LIVE_CONNECTOR_TENCENT_MEETING_TOKEN }}
-          CONNECTOR_TENCENT_WEIYUN_TOKEN: ${{ secrets.LIVE_CONNECTOR_TENCENT_WEIYUN_TOKEN }}
-          CONNECTOR_YOUDAO_NOTE_TOKEN: ${{ secrets.LIVE_CONNECTOR_YOUDAO_NOTE_TOKEN }}
-          CONNECTOR_TENCENT_NEWS_TOKEN: ${{ secrets.LIVE_CONNECTOR_TENCENT_NEWS_TOKEN }}
-          CONNECTOR_WECHAT_READING_TOKEN: ${{ secrets.LIVE_CONNECTOR_WECHAT_READING_TOKEN }}
-          CONNECTOR_QQ_MUSIC_TOKEN: ${{ secrets.LIVE_CONNECTOR_QQ_MUSIC_TOKEN }}
-          CONNECTOR_FLIGGY_TOKEN: ${{ secrets.LIVE_CONNECTOR_FLIGGY_TOKEN }}
-          CONNECTOR_BAIDU_MAP_TOKEN: ${{ secrets.LIVE_CONNECTOR_BAIDU_MAP_TOKEN }}
-          CONNECTOR_CTRIP_WENDAO_TOKEN: ${{ secrets.LIVE_CONNECTOR_CTRIP_WENDAO_TOKEN }}
-          CONNECTOR_TENCENT_IMA_TOKEN: ${{ secrets.LIVE_CONNECTOR_TENCENT_IMA_TOKEN }}
-          CONNECTOR_TENCENT_IMA_CLIENT_ID: ${{ secrets.LIVE_CONNECTOR_TENCENT_IMA_CLIENT_ID }}
-          CONNECTOR_TENCENT_LEXIANG_TOKEN: ${{ secrets.LIVE_CONNECTOR_TENCENT_LEXIANG_TOKEN }}
-          CONNECTOR_TENCENT_LEXIANG_COMPANY_FROM: ${{ secrets.LIVE_CONNECTOR_TENCENT_LEXIANG_COMPANY_FROM }}
-          CONNECTOR_MEITUAN_TRAVEL_TOKEN: ${{ secrets.LIVE_CONNECTOR_MEITUAN_TRAVEL_TOKEN }}
-          CONNECTOR_YUANDIAN_TOKEN: ${{ secrets.LIVE_CONNECTOR_YUANDIAN_TOKEN }}
-          # Channel probes (WeChat iLink + Feishu)
-          WEIXIN_BOT_UIN: ${{ secrets.LIVE_WEIXIN_BOT_UIN }}
-          WEIXIN_TOKEN: ${{ secrets.LIVE_WEIXIN_TOKEN }}
-          WEIXIN_BASE_URL: ${{ secrets.LIVE_WEIXIN_BASE_URL }}
-          FEISHU_APP_ID: ${{ secrets.LIVE_FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.LIVE_FEISHU_APP_SECRET }}
-        run: make test-live
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - run: uv run pytest tests/integration/test_cloud_identity.py tests/integration/test_platform_models.py tests/integration/test_platform_resources.py tests/integration/test_platform_sync.py tests/unit/db/test_application_migrations.py -q
+      - name: Vendored Memory synchronization parity
+        working-directory: vendor/octop-memory
+        run: uv run --project ../.. pytest -c pyproject.toml tests/test_logical_sync.py -q
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - run: |
+          helm lint deploy/helm/octop
+          helm template octop deploy/helm/octop >/dev/null
+          helm template octop deploy/helm/octop -f deploy/helm/octop/values.example.yaml >/dev/null
+          helm template octop deploy/helm/octop --set postgresql.enabled=false --set database.host=pg.example.com >/dev/null
+          if helm template octop deploy/helm/octop --set replicaCount=2 >/dev/null 2>&1; then
+            echo 'Concurrent cloud gateways are outside this release contract'; exit 1
+          fi
+  cloud-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: '3.12'
+      - run: docker build -f deploy/docker/Dockerfile -t octop:test .
+      - run: uv run --no-project --with pytest --with pytest-asyncio python -m pytest tests/integration/test_docker_image_boot.py -q --noconftest

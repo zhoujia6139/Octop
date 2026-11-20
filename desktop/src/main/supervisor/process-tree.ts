@@ -33,16 +33,6 @@ export function buildSidecarEnv(
   // Bytecode must not be written next to the sources. On macOS those sources
   // live inside the app bundle; on Windows they live in the install dir.
   env.PYTHONPYCACHEPREFIX = join(options.octopHome, "pyc");
-  // Desktop builds have no account system: the wizard password gate is off, so
-  // a fresh install never shows the setup password. The frontend reads
-  // `wizard_password_required` from /api/setup/status and hides the field on its
-  // own; nothing here is UI-specific.
-  //
-  // The access-token TTL stays at the server default: the Dashboard renews it
-  // while in use (sliding renewal) and the shell holds a device credential for
-  // cold starts, so a long-lived token is no longer needed to avoid a sign-in
-  // wall.
-  env.OCTOP_REQUIRE_SETUP_PASSWORD = "0";
   // The launch.py bootstrap handles runtime + .pth itself; an inherited
   // PYTHONPATH would shadow the bundled site-packages, so drop it.
   delete env.PYTHONPATH;

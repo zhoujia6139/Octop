@@ -105,12 +105,13 @@ assemble_one() {
   mkdir -p "$wheel_dir" "$GREEN_RELEASE" "$GREEN_ROOT"
   local octop_whl
   octop_whl="$(build_octop_wheel "$wheel_dir")"
+  build_local_library_wheels "$wheel_dir"
 
   local req_file="${GREEN_ROOT}/requirements-${plat}.txt"
   # Independent local application; cloud and legacy server extras are excluded.
   local export_extra=(--extra local-runtime)
   echo "[package] ${plat}: exporting frozen deps → ${req_file}" >&2
-  uv export --project "$REPO_ROOT" --frozen --no-dev --no-emit-project --no-hashes \
+  uv export --project "$REPO_ROOT" --frozen --no-dev --no-emit-local --no-hashes \
     "${export_extra[@]}" -o "$req_file" >/dev/null
   # Online --target upgrades need uv to reuse the bundled dependencies. pip
   # ignores installed packages with --target and resolves/downloads them again.
@@ -131,6 +132,7 @@ assemble_one() {
 
   local common_args=(
     --target "${staging}/packages"
+    --find-links "$wheel_dir"
     --python-platform "$pyplat"
     --python-version 3.12
     # Never compile these from sdist. cryptography on Intel macOS links Homebrew
@@ -197,23 +199,24 @@ assemble_one() {
     echo "[package] ${plat}: online install from locked requirements"
   fi
 
-  # Install locked deps first, then the local octop wheel without re-resolving deps.
-  # bash 3.2 + set -u: empty array expansion is unbound — branch explicitly.
+  # Resolve third-party pins separately. Install these exact locally built
+  # library files so a same-version registry release can never replace them.
+  local library_wheel
+  local product_wheels=("$octop_whl")
+  while IFS= read -r library_wheel; do
+    product_wheels+=("$library_wheel")
+  done < <(local_library_wheel_paths "$wheel_dir")
   set +e
   if [[ ${#offline_args[@]} -gt 0 ]]; then
     uv pip install "${common_args[@]}" "${offline_args[@]}" -r "$req_file"
     status=$?
-    if [[ $status -eq 0 ]]; then
-      uv pip install "${common_args[@]}" "${offline_args[@]}" --no-deps "$octop_whl"
-      status=$?
-    fi
   else
     uv pip install "${common_args[@]}" -r "$req_file"
     status=$?
-    if [[ $status -eq 0 ]]; then
-      uv pip install "${common_args[@]}" --no-deps "$octop_whl"
-      status=$?
-    fi
+  fi
+  if [[ $status -eq 0 ]]; then
+    uv pip install "${common_args[@]}" --no-deps "${product_wheels[@]}"
+    status=$?
   fi
   # Windows markers: ensure pywin32 landed (mcp needs pywintypes).
   if [[ $status -eq 0 && "$plat" == windows-* ]]; then
@@ -271,6 +274,10 @@ assemble_one() {
     sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/octop_version=\1/p' \
       "${REPO_ROOT}/pyproject.toml" | head -1
   } > "${staging}/VERSION.txt"
+
+  # Refuse shipping an environment that starts but cannot attach/synchronize.
+  PYTHONNOUSERSITE=1 "$prune_py" "$REPO_ROOT/scripts/verify_product_install.py" \
+    --role local --packages "$staging/packages" --launcher "$staging/launch.py"
 
   rm -f "$zip_path"
   echo "[package] ${plat}: zipping → ${zip_path}"

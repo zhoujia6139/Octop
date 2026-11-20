@@ -24,7 +24,8 @@ vendor_one() {
 
   req_file="${GREEN_ROOT}/requirements-${plat}.txt"
   echo "[wheels] ${plat}: exporting frozen deps → ${req_file}" >&2
-  uv export --frozen --no-dev --extra local-runtime --no-emit-project --no-hashes -o "$req_file" >/dev/null
+  uv export --frozen --no-dev --extra local-runtime --no-emit-local --no-hashes -o "$req_file" >/dev/null
+  build_local_library_wheels "$wheel_dir"
   # Keep offline bundles equipped with the same online updater as package.sh.
   echo "uv==${GREEN_UV_VERSION}" >> "$req_file"
 
@@ -47,6 +48,7 @@ vendor_one() {
     --only-binary cryptography \
     --only-binary shapely \
     "${extra[@]+"${extra[@]}"}" \
+    --find-links "$wheel_dir" \
     -r "$req_file"
 
   echo "[wheels] ${plat}: done ($(find "$wheel_dir" -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ') wheels)"

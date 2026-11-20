@@ -1,5 +1,7 @@
 # ADR 002 — Dual Database Backends (SQLite | PostgreSQL)
 
+> Product assembly superseded by [ADR 004](004-local-agent-cloud-control.md). This document records the retained legacy architecture and is not the current startup/configuration contract.
+
 **Status:** Accepted  
 **Date:** 2026-07-20  
 

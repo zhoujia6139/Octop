@@ -2,14 +2,14 @@
 # Usage:
 #   make              - Show this help
 #   make all          - format (BE+FE) + backend lint + typecheck + test (ship bar)
-#   make build        - Build frontend + Python wheel
-#   make publish      - Build + upload to PyPI
+#   make build        - Build frontend + product wheel set
+#   make publish      - Retired for local-source product distribution
 #
 # Prerequisites:
 #   - Node.js + npm   (frontend)
 #   - Python 3.12+    (backend)
 #   - uv              (recommended) or pip
-#   - twine           (publish: pip install twine / make install-tools)
+# Product runtime libraries are built from vendor/ and distributed as a wheel set.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -18,10 +18,6 @@ REPO_ROOT     := $(shell pwd)
 DASHBOARD_DIR := $(REPO_ROOT)/dashboard
 DASHBOARD_DEST := $(REPO_ROOT)/src/octop/dashboard
 DIST_DIR      := $(REPO_ROOT)/dist
-
-# PyPI repository (override: make publish PYPI_REPO=testpypi)
-PYPI_REPO  ?= pypi
-PYPI_TOKEN ?=
 
 # Prefer uv when available; fall back to plain commands (CI / pip install -e ".[dev]")
 UV   := $(shell command -v uv 2>/dev/null)
@@ -40,23 +36,17 @@ help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  build            Build frontend + Python wheel (full package)"
+	@echo "  build            Build frontend + product wheel set"
 	@echo "  build-frontend   Build React dashboard only → $(DASHBOARD_DEST)"
-	@echo "  build-wheel      Build Python wheel only (assumes frontend built)"
+	@echo "  build-wheel      Build Octop + local library wheels (assumes frontend built)"
 	@echo ""
 	@echo "Publish targets:"
-	@echo "  publish          Build + upload to PyPI (PYPI_TOKEN or prompt)"
-	@echo "  publish-test     Build + upload to TestPyPI"
+	@echo "  publish          Retired: use product GitHub Release artifacts"
 	@echo ""
 	@echo "Development targets:"
 	@echo "  dev              Start frontend + backend dev servers"
 	@echo "  dev-frontend     Start Vite dev server only"
 	@echo "  dev-backend      Start octop run only"
-	@echo ""
-	@echo "Online-deps targets (local Octop source + PyPI harness components):"
-	@echo "  install-online   Create .venv-online: Octop editable + harness-* from PyPI"
-	@echo "  test-online      pytest against .venv-online (not live)"
-	@echo "  run-online       Start octop run from .venv-online"
 	@echo ""
 	@echo "Quality targets (ship bar):"
 	@echo "  all              format-all + lint + typecheck + test (backend lint/typecheck/test)"
@@ -66,6 +56,7 @@ help:
 	@echo "  typecheck        mypy --strict src/octop"
 	@echo "  test             pytest -m \"not live\""
 	@echo "  test-live        pytest -m live"
+	@echo "  test-product     Current product and direct dependency tests"
 	@echo ""
 	@echo "Quality targets (frontend):"
 	@echo "  lint-frontend    ESLint + Prettier check"
@@ -84,7 +75,6 @@ help:
 	@echo "  install-dev      uv sync / pip install -e \".[dev]\""
 	@echo "  install-tools    Install build + twine for publishing"
 	@echo "  clean            Remove build artifacts and caches"
-	@echo "  clean-online     Remove the .venv-online environment"
 	@echo "  version          Show current project version"
 
 # ─── Build ───────────────────────────────────────────────────────────────────
@@ -103,56 +93,18 @@ build-frontend:
 
 .PHONY: build-wheel
 build-wheel:
-	@echo "[build-wheel] Generating README.pypi.md (CHANGELOG + README)..."
-	@{ cat $(REPO_ROOT)/CHANGELOG.md; echo; cat $(REPO_ROOT)/README.md; } > $(REPO_ROOT)/README.pypi.md
-	@cp $(REPO_ROOT)/pyproject.toml $(REPO_ROOT)/pyproject.toml.bak
-	@$(PYTHON) -c "from pathlib import Path; p=Path('$(REPO_ROOT)/pyproject.toml'); p.write_text(p.read_text().replace('readme = \"README.md\"', 'readme = \"README.pypi.md\"', 1))"
-	@echo "[build-wheel] Cleaning previous build artifacts..."
-	rm -rf $(DIST_DIR)/*
-	rm -rf $(REPO_ROOT)/build
-	@echo "[build-wheel] Building wheel + sdist..."
-	@set -e; \
-	status=0; \
-	if [ -n "$(UV)" ]; then \
-		uv build --out-dir $(DIST_DIR) . || status=$$?; \
-	else \
-		$(PIP) install --quiet build; \
-		$(PYTHON) -m build --no-isolation --outdir $(DIST_DIR) . || status=$$?; \
-	fi; \
-	mv $(REPO_ROOT)/pyproject.toml.bak $(REPO_ROOT)/pyproject.toml; \
-	rm -f $(REPO_ROOT)/README.pypi.md; \
-	exit $$status
-	@echo "[build-wheel] Done. Artifacts in: $(DIST_DIR)/"
-	@ls -lh $(DIST_DIR)/
+	bash scripts/build-product.sh $(DIST_DIR)/product
+
+.PHONY: test-product
+test-product:
+	$(RUN) pytest tests/integration/test_product_journey.py tests/integration/test_product_applications.py tests/integration/test_independent_applications.py tests/integration/test_cloud_identity.py tests/integration/test_platform_models.py tests/integration/test_platform_resources.py tests/integration/test_platform_sync.py tests/unit/models tests/unit/resources tests/unit/sync tests/unit/db/test_application_migrations.py tests/unit/test_application_launch.py tests/unit/test_cli_main.py tests/unit/test_cloud_deployment.py tests/unit/test_docker_entrypoint.py tests/unit/i18n -q
 
 # ─── Publish ─────────────────────────────────────────────────────────────────
 
 .PHONY: publish
-publish: build
-	@echo "[publish] Uploading to $(PYPI_REPO)..."
-	@if ! command -v twine > /dev/null 2>&1; then \
-		echo "[publish] twine not found. Installing..."; \
-		$(PIP) install --quiet twine; \
-	fi
-	@_token="$(PYPI_TOKEN)"; \
-	if [ -z "$$_token" ]; then \
-		echo ""; \
-		printf "  PYPI_TOKEN is not set. Enter your PyPI API token (pypi-xxx): "; \
-		read -r _token; \
-		if [ -z "$$_token" ]; then \
-			echo "[publish] No token provided. Aborting."; \
-			exit 1; \
-		fi; \
-	fi; \
-	$(if $(UV),uv run,) twine upload \
-		$(if $(filter testpypi,$(PYPI_REPO)),--repository testpypi,) \
-		--username __token__ --password "$$_token" \
-		$(DIST_DIR)/*
-	@echo "[publish] Upload complete."
-
-.PHONY: publish-test
-publish-test:
-	$(MAKE) publish PYPI_REPO=testpypi
+publish publish-test:
+	@echo "Product builds include locally maintained libraries; use build + the GitHub Release workflow, not PyPI."
+	@exit 1
 
 # ─── Development ─────────────────────────────────────────────────────────────
 
@@ -171,30 +123,6 @@ dev-frontend:
 .PHONY: dev-backend
 dev-backend:
 	$(RUN) octop run
-
-# ─── Online-deps dev (local Octop source + PyPI harness components) ───────────
-# Keeps a dedicated .venv-online alongside .venv. Octop itself is installed
-# editable (-e) so source edits are live; the harness-* siblings are pulled
-# from PyPI (--no-sources ignores the editable local paths in uv.lock).
-# Re-run install-online only when a dependency version changes.
-VENV_ONLINE := $(REPO_ROOT)/.venv-online
-PY_ONLINE   := $(VENV_ONLINE)/bin
-
-.PHONY: install-online
-install-online:
-	@echo "[install-online] Creating $(VENV_ONLINE) (local Octop + PyPI harness deps)..."
-	uv venv $(VENV_ONLINE) --python 3.12
-	uv pip install --no-sources --python $(PY_ONLINE)/python -e ".[dev]"
-	@echo "[install-online] Done. Octop=editable(local), harness-*=PyPI."
-
-.PHONY: test-online
-test-online:
-	@echo "[test-online] pytest against $(VENV_ONLINE) (not live)..."
-	$(PY_ONLINE)/pytest -m "not live"
-
-.PHONY: run-online
-run-online:
-	$(PY_ONLINE)/octop run
 
 # ─── Quality (backend) ───────────────────────────────────────────────────────
 
@@ -244,8 +172,7 @@ precommit: format-all lint typecheck test-affected
 # NOTE: do NOT pass `-m` here — pytest-testmon deactivates its affected-test
 # selection whenever a marker expression is present, which would fall back to
 # the full suite. Live tests under tests/live/ auto-skip when credentials are
-# absent, so running them unscoped is cheap and safe; the CI `make all` gate
-# keeps `-m "not live"` for the authoritative full run.
+# absent. Use test-product for the current product contract in CI.
 #
 # NOTE: testmon detects changes via `git ls-files -m` (worktree vs index), which
 # is empty once changes are staged — exactly the pre-commit state — so it would
@@ -326,12 +253,6 @@ clean:
 	rm -rf $(REPO_ROOT)/htmlcov
 	find $(REPO_ROOT)/src -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	@echo "[clean] Done."
-
-.PHONY: clean-online
-clean-online:
-	@echo "[clean-online] Removing $(VENV_ONLINE)..."
-	rm -rf $(VENV_ONLINE)
-	@echo "[clean-online] Done."
 
 .PHONY: version
 version:

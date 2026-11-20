@@ -1,12 +1,11 @@
 name: Release
 
-# 版本标签 v* → 测包、发 PyPI、建 GitHub Release，再级联：
-#   - Sync Main Into Develop
-#   - Build Octop FPK（复用本 Release 的 wheel；等待 docker-publish 的多架构 GHCR 镜像）
+# 版本标签 v* → 产品专项、构建本地运行库 wheel 集合、GitHub Release。
+# vendor 源码不单独发布 PyPI；Octop 以同版 wheel 集合与安装器交付。
 #
 # 与 docker-publish.yml / octop-desktop.yml 并行（由 Auto Tag 同时 dispatch，
-# 或人工 push v* tag 同时触发）。wheel / sdist 只发 PyPI 和 GitHub Release。
-# 桌面安装包与 FnOS FPK 挂到同一 GitHub Release 后，再上传到同一个 COS 版本目录。
+# 或人工 push v* tag 同时触发）。wheel / sdist 和锁定 requirements 只上传 GitHub Release。
+# 桌面安装包挂到同一 GitHub Release；旧 FnOS 包不再发布。
 
 on:
   push:
@@ -44,45 +43,31 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Install dependencies
         run: make install
 
+      - name: Build product UI
+        run: make build-frontend
+
       - name: Run tests
-        run: make test
+        run: make test-product
 
       - name: Build package
-        run: make build
+        run: make build-wheel
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: dist/
-
-  publish:
-    name: Publish to PyPI
-    needs: build
-    runs-on: ubuntu-latest
-    environment: pypi
-    steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: Publish package
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          path: dist/product/
 
   github-release:
     name: Create GitHub Release
-    needs: publish
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,7 +78,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: dist
-          path: dist/
+          path: dist/product/
 
       - name: Extract version from tag
         id: version
@@ -119,7 +104,7 @@ jobs:
               echo "## Install"
               echo ""
               echo '```bash'
-              echo "pip install octop==$version"
+              echo "# Install the wheel set using its role-specific requirements; see docs/product-applications.md"
               echo '```'
             } > .release-notes.md
           fi
@@ -131,7 +116,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: .release-notes.md
-          files: dist/*
+          files: dist/product/*
           generate_release_notes: true
 
   # workflow_run / release:published are unreliable when Release itself was
@@ -153,19 +138,3 @@ jobs:
             --repo "${{ github.repository }}" \
             --ref main \
             -f version="${{ github.ref_name }}"
-
-  # FnOS FPK：复用本 Release 的 wheel + docker-publish 的 GHCR 镜像。
-  # 与 sync-develop 并行。Dispatch 失败必须让本 workflow 变红（PyPI 已发布仍如此）。
-  trigger-fnos:
-    name: Trigger FnOS FPK build
-    needs: github-release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dispatch Build Octop FPK
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # --ref 用版本 tag，保证 FPK 打在与 PyPI / 镜像相同的 commit 上
-          gh workflow run fnos-build-fpk.yml \
-            --repo "${{ github.repository }}" \
-            --ref "${{ github.ref_name }}"

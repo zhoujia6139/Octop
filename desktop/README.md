@@ -1,290 +1,45 @@
-# Octop desktop (green portable + Electron shell)
+# Octop Desktop
 
-All desktop-client code lives here. This is **not** `src/octop/infra/control/desktop`
-(remote desktop streaming).
+Electron starts the independent local Python application (`launch.py run --role desktop`) on a random loopback port. Cloud management is a separate program deployed at a trusted HTTPS origin. See [architecture](docs/DESKTOP_ARCHITECTURE.zh.md) and [product setup](../docs/product-applications.md).
 
-The independent backend work is tracked in [`../Plan.md`](../Plan.md) and
-[`../docs/desktop-cloud-contracts.md`](../docs/desktop-cloud-contracts.md).
-For the new application, `pnpm dev -- --local-runtime` explicitly launches the new local
-application through `run --role desktop`; its per-launch local API credential
-is generated in the main process. The existing UI still uses its old API and
-is migrated in P6. The new backend currently supports health, local instance
-and thread creation, and streaming/approval/cancellation; production model
-access stays unavailable until the platform gateway is connected in P3.
-P2 adds password/TOTP cloud login and single-device credentials through
-`window.octopDesktop.cloud`. The main process stores renewal credentials with
-OS safeStorage and hands only expiring device access to the sidecar. Set
-`OCTOP_CLOUD_URL` or `local/config.json` → `cloud_url` to select the trusted
-cloud. Account databases/workspaces live in separate local account directories;
-logout interrupts tasks and preserves pending data. See
-[`../docs/cloud-identity.md`](../docs/cloud-identity.md) for initialization,
-credential lifetimes, IPC flow and offline logout semantics. Product login
-screens and the default entry point still move in P6.
+## Development
 
-Portable dependency export uses `local-runtime`, independently of the cloud
-extra. Native installers with the migrated product UI are validated in P7.
-
-| Path | Role |
-|------|------|
-| [`src/`](src/) | Electron shell — owns the Python sidecar, not the business logic |
-| [`portable/`](portable/) | Green zip packaging |
-| [`docs/DESKTOP_ARCHITECTURE.zh.md`](docs/DESKTOP_ARCHITECTURE.zh.md) | Target architecture for the Electron shell |
-| [`docs/LOCAL_ACCOUNT_CLAIM.zh.md`](docs/LOCAL_ACCOUNT_CLAIM.zh.md) | Claim an existing local account when `OCTOP_HOME` already has users (not implemented) |
-
-The Electron shell owns the whole desktop lifecycle: spawn Octop on a random
-loopback port, own tray/window chrome, refuse self-updates. The green runtime
-is expanded before the user launches: NSIS `tar.exe` on Windows, and the tree
-`package.sh` assembled copied into the app on macOS and Linux. CI builds the
-green zips and bundles each one with the Electron shell and Dashboard in a
-matching native installer.
-
-Inside the Electron package everything sits directly under `src/`: `main/`,
-`preload/`, `renderer/`, `shared/`.
-
-## Electron shell (pnpm + Node 24)
-
-`desktop/src` is an independent Node package managed by **pnpm 12.15.0**
-(the version `corepack use pnpm` resolves under Node 24). The version is declared
-in three places that must stay equal:
-
-| Where | Read by |
-|-------|---------|
-| `src/package.json` → `packageManager` | corepack, and pnpm's own version check |
-| `src/package.json` → `devEngines.packageManager` | pnpm 12 / npm native check (`onFail: error`) |
-| `mise.toml` → `[tools] pnpm` | `mise install` / `mise exec`, so PATH has the same binary |
-
-Measured behaviour: running an older pnpm in this directory silently re-execs
-12.15.0 (`Done in 4ms using pnpm v12.15.0`), while corepack-invoked mismatches
-fail with `ERR_PNPM_BAD_PM_VERSION`. Either way `pnpm-lock.yaml` cannot be
-rewritten by a different major.
-
-Config is split by pnpm's own rules — since pnpm 11, `.npmrc` is read **only**
-for registry/auth, and the `package.json` `"pnpm"` field is ignored:
-
-| File | Holds |
-|------|-------|
-| `src/pnpm-workspace.yaml` | `nodeLinker: hoisted`, `allowBuilds` (electron, esbuild, app-builder-bin, …) |
-| `src/.npmrc` | `registry` only |
-
-`nodeLinker: hoisted` is required because electron-builder and electron-vite
-inspect a flat `node_modules` tree. `allowBuilds` is required because pnpm blocks
-postinstall by default and pnpm 12 fails the install (`ERR_PNPM_IGNORED_BUILDS`)
-when a blocked package needs one. `electron` is not on that list: since
-Electron 45 the package has no postinstall, and `node_modules/electron/dist/` is
-populated on first use — `pnpm dev` triggers it through `require("electron")`,
-CI can do it explicitly with `npx install-electron`.
-
-Node is pinned to **24** by `src/mise.toml`, overriding the repo-root pin of
-20. That override is scoped to this directory and nowhere else: the Dashboard,
-`deploy/docker/Dockerfile` (`node:20-slim`), `release.yml`, `fnos-build-fpk.yml`,
-`octop-desktop.yml` and the server all stay on Node 20. The reason for the split
-is `pnpm test`, which uses `node --test --experimental-strip-types` and needs
-Node ≥22.6 (on Node 20 the runner dies with `bad option`), plus Node 20's April
-2026 EOL. This only affects build/test tooling: the shipped app runs on
-Electron's bundled Node (Electron **45.0.0** → Node 24.22.0, Chromium 156), so
-raising the app's runtime Node means upgrading Electron, not this pin.
+From the repository root install the vendored local libraries and build the product UI:
 
 ```bash
+uv sync --frozen
+make build-frontend
 cd desktop/src
-mise install                    # node 24 + pnpm 12.15.0
-pnpm install --frozen-lockfile
-pnpm typecheck && pnpm test && pnpm build
-pnpm dev                        # build the shell, then launch with Dashboard hot reload
-pnpm dev:start                  # relaunch without rebuilding the shell (Dashboard still hot-reloads)
-pnpm dev:no-sandbox             # same, minus the Chromium sandbox + GPU process
-pnpm package                    # electron-builder (requires staged resources)
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev
 ```
 
-All three launch scripts are `scripts/run-dev.sh` with different flags; `--`
-forwards the rest of the line to the Electron binary:
+Use Node and pnpm versions from `desktop/src/package.json` (Node 24 and pnpm 12). The development launcher creates a venv-backed runtime under `.dev-runtime`, starts the Vite UI and runs main's API/WS proxy; no renderer token or direct supplier key is needed. `pnpm dev:start` reuses an existing build. `--no-sandbox` is an explicit development diagnostic option for hosts without sandbox support, not the default product configuration.
+
+First launch asks for the cloud origin, then password and enabled MFA/recovery proof. Main binds/renews the user's device and selects the verified sidecar namespace. The OS keychain encrypts remembered credentials; when a usable keychain is unavailable (including Linux basic_text), credentials remain in memory and restart requires login. The renderer cannot read them.
+
+The product UI provides chat, Agents, skills, supported files, synchronization and usage. Administrator publication/model/account operations belong to cloud management. No local setup wizard, IM, cron or web chat server is started.
+
+## Build
 
 ```bash
-pnpm dev:start -- --lang=en-US --remote-debugging-port=9222
-```
-
-`Ctrl+C`, `SIGTERM`, and `SIGHUP` stop the shell **and** its Python sidecar.
-`run-dev.sh` delegates lifecycle management to `scripts/dev-process.mjs` before
-building, then replaces the build shell with Electron. The managed command runs
-in its own process group, so terminal signals reach the supervisor only. It
-sends Electron one `SIGTERM` to allow its normal sidecar shutdown, tracks the
-process tree (including Python's detached group), and cleans up observed
-survivors even if Electron crashes or exits normally.
-
-After 8 seconds the supervisor sends `SIGKILL` to remaining processes and waits
-up to 2 more seconds to confirm cleanup; a second signal skips the grace window.
-Explicit terminal stops return 0, while build/app failures retain their non-zero
-exit status. Unconfirmed cleanup returns 1 instead of claiming success. There is
-no background shell watchdog left behind.
-
-This runner supports macOS/Linux and requires a readable `ps`; when the host
-blocks it the script refuses to start rather than launching something it cannot
-clean up. A single failed sample during a run is skipped, not treated as a
-reason to stop the app.
-
-Descendants are sampled while the app is alive, so a detached process that is
-orphaned between two snapshots can evade tracking; `SIGKILL` of the supervisor
-itself cannot run any cleanup. Detached children of a build that died before the
-first snapshot are still adopted by process group, unless their number was
-already reused. None of this changes the packaged app's lifecycle or the
-separate root `make dev` command.
-
-### Why the launch flags
-
-`run-dev.sh` always drops `ELECTRON_RUN_AS_NODE` for the launch (and only for
-the launch). When that variable is set to anything — some shells and CI images
-export it globally — the Electron binary runs as a plain `node`, so
-`require("electron")` returns a path string instead of the API and the first
-line of `main/index.ts` dies with
-`Cannot read properties of undefined (reading 'registerSchemesAsPrivileged')`.
-
-`--no-sandbox` is **not** the default, because it removes Chromium's renderer
-isolation. Reach for `pnpm dev:no-sandbox` only where the setuid helper cannot
-initialise (`sandbox initialization failed: Operation not permitted`) or the GPU
-process dies (`GPU process exited unexpectedly`): containers, CI, headless
-hosts, locked-down sandboxes. It is a dev-host switch and must never reach a
-packaged build.
-
-`dashboard/` is still npm-managed (`dashboard/package-lock.json`); the two
-package managers never share a `node_modules` tree.
-
-## Accounts (no sign-in wall)
-
-Desktop builds run without the account system. `buildSidecarEnv()` gives the
-sidecar `OCTOP_REQUIRE_SETUP_PASSWORD=0`, so the wizard skips its CLI password
-and the first admin gets a server-minted password nobody ever types
-(`POST /api/setup/initial-admin` accepts a body without `password`). The JWT
-lifetime is left at the server default: the session is renewed, not lengthened.
-
-The Dashboard is not desktop-specific: it reads `wizard_password_required`
-from `/api/setup/status` and hides the password step plus the Admin step's
-password fields. A web deployment keeps the default `true` and the same code
-renders them again. While the shell runs `OCTOP_REQUIRE_SETUP_PASSWORD` is
-shell-owned — the `~/.octop/env` file and `PUT /api/envs` cannot put the
-sign-in wall back.
-
-An unknown password would be a dead end the moment the JWT expired, so the
-shell holds a **device credential** instead:
-
-- `main/session/device-credential.ts` mints a 32-byte secret on first use and
-  stores it encrypted with `safeStorage` (Keychain / DPAPI / libsecret) at
-  `<OCTOP_HOME>/desktop-device.json`, mode `0600`. A host with **no usable
-  keychain** (headless Linux, WSL, CI) keeps the secret in memory for that launch
-  and writes nothing: a plaintext file leaks through every backup or sync of the
-  home directory, and a key stored beside its own ciphertext would be decoration.
-  The trade-off is one sign-in per launch there — the server upserts a single
-  `desktop_device` row, so re-registering replaces it instead of piling up
-  devices.
-- A v1 file written while the plaintext fallback still existed is re-encrypted on
-  the next start when a keychain is available, and deleted otherwise (its secret
-  is still adopted for that one launch).
-- The renderer never sees it. After the first authenticated response,
-  `dashboard/src/api/desktopSession.ts` asks the shell to bind the credential to
-  the signed-in user (`POST /api/auth/device/register`, which replaces any
-  previous token, so a reinstall or second machine takes over).
-- On a `401`, `request()` renews once through the shell
-  (`POST /api/auth/device/token`) and retries with the new JWT. The exchange is
-  JWT-exempt but requires the shell flag, a loopback peer, a matching SHA-256
-  digest (constant-time compare) and stays under a per-host failure throttle —
-  only the digest is stored server-side (`secrets` row `desktop_device`).
-- `POST /api/auth/device/revoke` forgets the credential; the shell exposes it as
-  `session.revoke` for a future "reset this device's login" action.
-
-So a desktop install keeps working across restarts and across JWT expiry without
-ever asking for a password. Sliding renewal still rotates the token during use.
-The one remaining dead end is deliberate: an admin who *deletes* the credential
-(or whose user row is removed) reaches the normal login page, and recovering
-from there is a server-side operation (`octop user passwd`), not something the
-shell can do on its own.
-
-A different gap is also unsolved: an `OCTOP_HOME` that already has users (an
-older desktop install, or a local `octop run`) never registered a device
-credential, so the new shell lands on the login page. The claim flow for that
-case is specified in [`docs/LOCAL_ACCOUNT_CLAIM.zh.md`](docs/LOCAL_ACCOUNT_CLAIM.zh.md)
-and is not implemented yet.
-
-## WebSocket relay (shell-owned)
-
-`octop://app` cannot carry a WebSocket handshake: the upgrade never reaches
-`protocol.handle`, and `webRequest.onBeforeRequest` drops `redirectURL` for a
-`webSocket` request. So the shell runs a relay on `127.0.0.1`
-(`main/protocol/ws-relay.ts`) and the page dials
-`ws://127.0.0.1:<ephemeral>/<per-launch path segment>/api/<path>?<query>`,
-learning both from `window.octopDesktop.wsEndpoint()` — never the sidecar port,
-which the relay re-reads per connection. Requests without the exact path segment,
-or with any `Origin` other than `octop://app`, are refused with `403`; a sidecar
-that is down gives `503` and an unreachable one `504`, while a backend refusal
-(401/404) is passed through instead of being turned into a tunnel. The JWT still
-travels in the query, exactly as it does in a browser — the relay injects
-nothing. Outside the shell there is no bridge, so `resolveWsUrl()` falls back to
-the page origin and every hook works in both modes.
-
-## Update flow (shell-owned)
-
-`installUpdate()` is the only install entry point the renderer has, and it
-takes **no arguments**. The settings page confirms first. The shell then
-re-selects the release, so the page cannot name a package URL. Check and
-install failures stay on the shell's system dialog; download progress stays on
-the taskbar or Dock.
-
-1. `main/update/update-coordinator.ts` selects the release from the manifest
-   (stable/beta preference, never a downgrade, `https` + `download.octop.cloud`
-   only).
-2. `main/update/download.ts` streams the installer into `$TMPDIR/octop-update`
-   and reports progress to the taskbar/Dock.
-3. API admission closes (the `octop://app/api/*` proxy answers `503`), then
-   `SidecarSupervisor.stop()` waits for Python to exit **by itself with code 0**.
-   A forced kill or non-zero exit cancels the install instead of replacing files
-   under a live backend.
-4. `main/update/installer.ts` hands the file to the OS installer — `dmg`/`pkg`
-   through `shell.openPath`, `exe`/`msi` spawned detached on Windows, AppImage
-   `chmod +x` first — and the shell quits so the installer can replace it.
-5. If the installer never opens, the sidecar is restarted and the window
-   reloads, so a failed hand-off does not leave a dead backend.
-
-Not covered yet: the §3.4 "running tasks" confirmation before quit (the backend
-has no task-query endpoint) and manifest-level digests — release assets carry no
-checksum, so only the pinned-download-host rule is enforced.
-
-## Data directory
-
-Same as the Octop CLI/server default:
-
-- `OCTOP_HOME` → `~/.octop` (or the existing `OCTOP_HOME` env)
-- Green runtime → Windows `<install>\resources\sidecar`, macOS and Linux `Contents/Resources/portable` (Linux deb/rpm use the same `resources/portable` path under the install prefix)
-- Shell prefs → `~/.octop/desktop-settings.json`
-
-The shell points `OCTOP_GREEN_PACKAGES` at the extracted `packages/` directory, so
-`octop update` upgrades it through Octop's existing `--target` logic. Newer
-extracted runtimes are never downgraded; PostgreSQL stays externally managed and
-is not copied by the shell.
-
-## Build green zip
-
-From repo root:
-
-```bash
+# Root: portable CPython + locally built Harness/Memory wheels + Octop/UI
 make -f desktop/portable/Makefile green
+# desktop/src: typecheck/build, then package after staging resources below
+corepack pnpm typecheck
+corepack pnpm build
 ```
 
-CI: `.github/workflows/octop-desktop.yml` builds one package per native
-platform/arch (`darwin-arm64`, `darwin-amd64`, `linux-arm64`, `linux-amd64`,
-`windows-arm64`, `windows-amd64`). The green zip matches the published image
-and includes the `browser` extra only. Desktop, OCR, and local embedding stay
-on the Docker `:<version>-full` image. Pull requests, tags, and manual
-dispatch all build this one package. The workflow attaches
-`Octop-portable-<plat>-<version>.zip` to the GitHub Release, then mirrors it
-to COS. Each job bootstraps portable CPython, packages the zip, smoke-tests
-every frozen requirement, and bundles that exact zip plus the Dashboard into
-a native Electron installer. For macOS this produces DMG and ZIP, for Windows
-NSIS EXE, and for Linux deb and rpm. A deb install also places a desktop
-launcher for the account that ran `apt` (see
-`desktop/docs/DESKTOP_ARCHITECTURE.zh.md` §7.2). Installer files are named
-`Octop-desktop-<plat>-<version>.<ext>`. The portable manifest records the
-original Python version and the bundled zip's SHA-256. Installers are
-unsigned and not notarized.
+`desktop/portable/package.sh` builds the two libraries from `vendor/`, installs their wheels with locked role dependencies, prunes third-party tests and verifies real installed CLI startup plus the synchronization APIs. No editable path or sibling checkout is shipped. See [portable details](portable/README.md).
 
-A `v*` tag triggers building all six platform/architecture variants and attaches
-both portable and desktop assets to the same GitHub Release. For a trial build
-without publishing a release, dispatch `octop-desktop.yml` on the feature branch
-with `platforms=all` and `attach_release=false`; download the artifacts from
-that workflow run. Do not dispatch on an older tag without the Electron source.
+For native packaging, mirror the staging in `.github/workflows/octop-desktop.yml`: macOS/Linux place the expanded portable tree in `desktop/src/resources/portable`; Windows places the zip and `portable-version.json` there for NSIS expansion. Write `portable-version.json` with the product version and zip `sha256`, as the workflow does. Then run `pnpm package` with OCTOP_VERSION/OCTOP_PLATFORM. The workflow is the exact manifest/hash source of truth.
+
+Native CI builds six OS/architecture combinations, uses the same portable payload and bundles the built UI. macOS targets DMG/ZIP, Windows NSIS EXE, Linux deb/rpm. Installers are unsigned and macOS releases are not notarized. A configured CI matrix does not prove Windows/Linux installers or real OS lifecycle events passed; record actual results using [the checklist](docs/QUIT_TASK_CHECK.zh.md).
+
+For reproducible macOS arm64 GUI acceptance after building the shell and portable payload, run `uv run python scripts/verify_desktop.py` from the root. It uses a temporary cloud/profile and deterministic supplier, exercises real keychain and UI WebSocket tools, and performs no paid request or real OS sleep.
+
+## Data and lifecycle
+
+`OCTOP_HOME` is the data root (default `~/.octop`); local application config and account namespaces live below `local/`. Runtime binaries stay in the installation resources. Main's preferences are separate from synchronized Agent content. Upgrades replace shell, UI and Python payload together; no old `octop update`/server settings update route is active.
+
+Quit/suspend closes admission, persists interrupted turns, drains accepted memory work and tries a bounded final sync. Pending content stays pending when cloud is offline. Wake/restart validates device authorization and never replays tasks or approvals. Hiding to tray keeps the process alive. See [lifecycle and acceptance](docs/QUIT_TASK_CHECK.zh.md).

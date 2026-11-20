@@ -101,7 +101,7 @@ def main() -> int:
     pins = {**req_pins, **override_pins}
 
     errors: list[str] = []
-    for dist in ("langchain-core", "langchain-openai", "cryptography"):
+    for dist in ("langchain-core", "langchain-openai", "cryptography", "octop-harness", "octop-memory"):
         expected = pins.get(dist)
         if expected is None:
             continue
@@ -117,7 +117,14 @@ def main() -> int:
         except Exception as exc:
             errors.append(f"import {mod}: {type(exc).__name__}: {exc}")
 
-    # Sanity: launch.py must stay importable as a file (no compile errors).
+    try:
+        from octop.infra.sync.local import require_sync_runtime
+
+        require_sync_runtime()
+    except Exception as exc:
+        errors.append(f"local synchronization contract: {type(exc).__name__}: {exc}")
+
+    # Sanity: this verifier must remain importable as a file.
     try:
         ast.parse(Path(__file__).read_text(encoding="utf-8"))
     except SyntaxError as exc:

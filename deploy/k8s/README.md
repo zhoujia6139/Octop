@@ -1,5 +1,3 @@
-# Moved
+# Kubernetes deployment
 
-Kubernetes installs use the Helm chart: [../helm/octop/README.md](../helm/octop/README.md).
-
-The hand-written manifests that used to live here were removed. The chart is the only copy.
+Use the current [cloud Helm chart](../helm/octop/README.md). It replaces the old combined Agent-server cluster arrangement. Cloud runs one gateway with PostgreSQL; tools and workspaces run in Octop Desktop. There are no IM/cron leases, required vector extension or shared Agent workspaces in this deployment.

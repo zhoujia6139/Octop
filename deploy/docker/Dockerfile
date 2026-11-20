@@ -10,6 +10,9 @@ FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
+# uv's frozen local-source records need metadata; no library source/executor is copied.
+COPY vendor/octop-harness/pyproject.toml vendor/octop-harness/pyproject.toml
+COPY vendor/octop-memory/pyproject.toml vendor/octop-memory/pyproject.toml
 RUN uv sync --frozen --no-dev --extra cloud --no-install-project
 COPY src/ ./src/
 COPY --from=frontend-builder /build/src/octop/dashboard/ ./src/octop/dashboard/

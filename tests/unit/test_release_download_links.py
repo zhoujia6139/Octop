@@ -41,50 +41,26 @@ def test_render_download_section_matches_github_asset_names() -> None:
     assert "AppImage" not in body
     assert f"{base}/Octop-portable-linux-amd64-0.9.31.zip" in body
     assert f"{base}/Octop-portable-linux-arm64-0.9.31.zip" in body
-    assert f"{base}/Octop-fnos-docker-0.9.31.fpk" in body
-    assert f"{base}/Octop-fnos-docker-lite-0.9.31.fpk" in body
-    assert f"{base}/Octop-fnos-native-amd64-0.9.31.fpk" in body
-    assert f"{base}/Octop-fnos-native-arm64-0.9.31.fpk" in body
+    assert "Octop-fnos-" not in body
     assert "ghcr.io/tencentcloud/octop:0.9.31` (`:latest`)" in body
-    assert "ghcr.io/tencentcloud/octop:0.9.31-full" in body
-    assert "-full-0.9.31." not in body
-    assert "browser extra only" in body
-    assert "Docker lite (x86 and ARM)" in body
-    assert "Docker full (desktop, OCR, local models; x86 and ARM)" in body
-    assert "Native x86_64" in body
-    assert "Native ARM64 (no Docker)" in body
+    assert "0.9.31-full" not in body
+    assert "local Agent runtime" in body
     assert "pip install" not in body
     assert "## Downloads" in body
 
 
-def test_patch_release_body_drops_unpublished_fnos_packages() -> None:
+def test_patch_release_body_removes_legacy_fnos_without_erasing_cloud():
     mod = _load()
-    body = mod.render_download_section("0.9.31") + "\n## What's Changed\n\n- kept\n"
-    present = [
-        "Octop-fnos-docker-0.9.31.fpk",
-        "Octop-fnos-native-amd64-0.9.31.fpk",
-        "Octop-desktop-windows-amd64-0.9.31.exe",
-    ]
-    patched = mod.patch_release_body(body, "0.9.31", present)
-    assert "Octop-fnos-docker-lite-0.9.31.fpk" not in patched
-    assert "ghcr.io/tencentcloud/octop:0.9.31` (`:latest`)" not in patched
-    assert "ghcr.io/tencentcloud/octop:0.9.31-full" in patched
-    assert "Octop-fnos-docker-0.9.31.fpk" in patched
-    assert "Octop-fnos-native-amd64-0.9.31.fpk" in patched
-    assert "Native ARM64" not in patched
-    assert "Octop-desktop-windows-amd64-0.9.31.exe" in patched
+    body = (
+        mod.render_download_section("1.0.3b7")
+        + "\n### fnOS NAS\n- retired.fpk\n\n## What's Changed\n- kept\n"
+    )
+    patched = mod.patch_release_body(body, "1.0.3b7", [])
+    assert "retired.fpk" not in patched
+    assert "### fnOS NAS" not in patched
+    assert "ghcr.io/tencentcloud/octop:1.0.3b7" in patched
     assert "## What's Changed" in patched
     assert "- kept" in patched
-
-
-def test_patch_release_body_keeps_lite_when_its_package_shipped() -> None:
-    mod = _load()
-    body = mod.render_download_section("0.9.31")
-    names = [filename for filename, _label in mod.fnos_assets("0.9.31")]
-    patched = mod.patch_release_body(body, "v0.9.31", names)
-    assert patched == body if body.endswith("\n") else patched == body + "\n"
-    assert "ghcr.io/tencentcloud/octop:0.9.31` (`:latest`)" in patched
-    assert "ghcr.io/tencentcloud/octop:0.9.31-full" in patched
 
 
 def test_download_links_follow_the_fork(monkeypatch) -> None:

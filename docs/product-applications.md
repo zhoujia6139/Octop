@@ -59,6 +59,34 @@ CLI 文案遵循终端 `LC_ALL` / `LC_MESSAGES` / `LANG`，不读取旧管理数
 
 旧 API、CLI 辅助模块和旧页面中尚被回归测试或公共能力引用的源码暂不批量删除；新应用入口和构建图不引用旧产品编排。已删除仅验证退役 CLI、旧 setup 容器、虚拟桌面镜像和 FnOS 旧启动器的测试，并以本阶段的角色边界、首次初始化及中断恢复用例替代；保留共享模块回归测试，但按本轮用户要求不运行无关用例。
 
-旧 mobile/cluster Compose 已移除，旧全功能 FnOS 启动器明确拒绝启动，避免复用旧向导和凭据假设。FnOS 新包、镜像发布矩阵、CI、原生安装器以及 Linux/Windows/macOS 的实机生命周期验收属于 P7，不能用当前候选验收替代。现有 Helm 模板已改用 cloud DSN Secret（`url` 键）与新初始化变量；实际 Chart 发布和跨节点部署仍在 P7。
+旧 mobile/cluster Compose 已移除，旧全功能 FnOS 启动器明确拒绝启动。P7 取消旧 FnOS/full/lite 发布链，当前部署为 cloud-only 镜像或单实例 Helm（普通 PostgreSQL，无 pgvector 前提）。实际平台验收及未覆盖项目见 [Plan.md](../Plan.md)；不能把配置好的 CI 当作已执行结果。
 
-P5 的候选运行库未在本轮发布。`uv.lock` 本轮仅因退役 extras 和开发依赖分组而重新生成，Harness/Memory 正式 pin 仍是 P4 版本。开发验证继续安装 P5 wheel 并使用 `UV_NO_SYNC=1`，不能将普通 frozen 安装宣称为已经切到 P5。
+## 本地源码依赖与产品 wheel 集合
+
+按用户 P7 的最新要求，两库直接维护在仓库内 `vendor/octop-harness` 和 `vendor/octop-memory`，各自保留代码、许可证、测试和来源记录。`pyproject.toml` 的 `tool.uv.sources` 与 `uv.lock` 使用相对路径；普通 `uv sync --frozen` 加载本地 1.0.12/1.0.6 源码。不发布运行库，不依赖相邻 `*-p5` worktree，也不需要候选包覆盖或 `UV_NO_SYNC`。
+
+```bash
+uv sync --frozen
+make build                   # 前端 + dist/product
+make test-product            # 实际产品及直接依赖专项
+```
+
+`dist/product/` 包含 Octop wheel/sdist、两库 wheel 和 cloud/local-runtime 的锁定 requirements。单个 Octop wheel 不包含 uv 的源码映射；安装集合时先按角色装锁定依赖，再装 Octop：
+
+```bash
+# Python 3.12；示例路径为 POSIX，Windows 的解释器在 env/Scripts/python.exe
+uv venv env
+uv pip install --python env/bin/python --find-links dist/product -r dist/product/requirements-cloud.txt
+uv pip install --python env/bin/python --no-deps dist/product/octop-*.whl
+env/bin/python scripts/verify_product_install.py --role cloud
+```
+
+本地角色将 requirements 换为 `requirements-local-runtime.txt`；在安装 Octop 前，显式安装本次构建的运行库文件，验证参数为 `--role local`：
+
+```bash
+uv pip install --python env/bin/python --no-deps dist/product/octop_harness-*.whl dist/product/octop_memory-*.whl
+```
+
+角色 requirements 仅包含锁定的第三方包，两库以明确的本地文件安装，避免同版本远端包参与选择；不携带 editable 路径。云端依赖集合不会安装两库、Browser、Gateway、LangChain 或 cron。需要完全离线交付时，先把所选角色 requirements 中的第三方 wheel 下载进 wheelhouse，再用 `--no-index --find-links` 安装；默认 wheel 集合只内置产品与两个本地库。
+
+云端 Docker 构建只复制两库 pyproject 元数据以读取 frozen 路径记录，不复制执行库源码，也不安装执行组件。Electron 便携包使用相同本地 wheel，并在压缩前检查同步接口与真实 CLI 启动。`uv run` 不再安装远程 Harness/Memory。分发方式见 [vendor/README.md](../vendor/README.md)。

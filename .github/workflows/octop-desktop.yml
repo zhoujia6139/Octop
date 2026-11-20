@@ -21,6 +21,12 @@ on:
   pull_request:
     paths:
       - "desktop/**"
+      - "vendor/**"
+      - "src/**"
+      - "dashboard/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "scripts/verify_product_install.py"
       - ".github/workflows/octop-desktop.yml"
   workflow_dispatch:
     inputs:
@@ -74,9 +80,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          # Dashboard stays on Node 20 (same as deploy/docker/Dockerfile + release.yml).
-          # Node 24 is a desktop/electron-only pin and nothing here builds it.
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
@@ -195,6 +199,8 @@ jobs:
           bash desktop/portable/package.sh "${{ matrix.plat }}"
 
       - name: Smoke import (native host only)
+        env:
+          OCTOP_PACKAGE_PLATFORM: ${{ matrix.plat }}
         run: |
           set -euo pipefail
           staging="desktop/portable/release/Octop-${{ matrix.plat }}"
@@ -223,8 +229,9 @@ jobs:
             "$py" desktop/portable/verify_imports.py \
               "${verify_args[@]}"
           # macOS: fail if any native extension linked Homebrew/MacPorts paths.
-          if [[ "${{ matrix.plat }}" == darwin-* ]]; then
-            REPO_ROOT="$PWD" # shellcheck source=desktop/portable/_common.sh
+          if [[ "$OCTOP_PACKAGE_PLATFORM" == darwin-* ]]; then
+            REPO_ROOT="$PWD"
+            # shellcheck source=desktop/portable/_common.sh
             source desktop/portable/_common.sh
             verify_no_homebrew_dylibs "${staging}/packages" "${{ matrix.plat }}"
           fi

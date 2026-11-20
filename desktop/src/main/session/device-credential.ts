@@ -5,19 +5,13 @@ import { join } from "node:path";
 import { desktopLog } from "../log/desktop-log";
 
 /**
- * Per-install device credential (§7 accounts).
+ * Per-install encrypted credential container. CloudSessionClient stores the
+ * current cloud device refresh credential here; password/MFA authenticates the
+ * account and the server fences one current device binding per user.
  *
- * Desktop builds have no password a user could type, so the shell keeps a
- * secret it can trade for a fresh JWT when the old one expired. It lives in the
- * data root next to the database, encrypted with the OS keychain
- * (`safeStorage`), and is never handed to the renderer.
- *
- * A host without a usable keychain (headless Linux, WSL, CI) gets the secret
- * held in memory for that launch and **nothing on disk**: a plaintext credential
- * leaks through every home-directory backup and sync, and a "key" stored next to
- * its ciphertext would only look like encryption. The price is one sign-in per
- * launch on those hosts — the server keeps a single `desktop_device` row, so
- * re-registering replaces it instead of piling up devices.
+ * Main alone reads the credential. Without a reliable OS keychain it remains
+ * in memory, so restart requires login; no plaintext file or co-located key is
+ * written. The store itself does not authenticate or replace a cloud binding.
  *
  * The cipher is injected so this module stays free of Electron imports and can
  * be unit-tested outside a running app.

@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/TencentCloud/octop-harness",
+  "base_commit": "997f5f837787b0afa0fa8c29d7e77e27e3584f4b",
+  "local_changes": "P5 synchronization APIs and lifecycle; maintained locally, not published."
+}

@@ -1,12 +1,7 @@
-# 部署
+# 云端部署
 
-> P6：默认部署已切换为独立云端应用。当前可执行入口与首次配置见 [产品说明](../docs/product-applications.md)。下文的旧 full/lite、网页 setup、IM/桌面服务器及 FPK 发布说明属于待 P7 更新的历史记录，不能用于新产品部署。
+云端独立运行管理与模型网关，Agent 在 Octop Desktop 执行。使用 [Docker](docker/README_CN.md) 或 [Helm](helm/octop/README_CN.md) 示例；新镜像仅包含 cloud 依赖，通过显式初始化创建首位管理员，没有 setup wizard。
 
-[English](README.md)
+持久化使用 SQLite 卷或 PostgreSQL，保存账号/设备、资源、账本与同步内容。无需 Agent 工作区、浏览器/终端控制、IM、定时任务、向量数据库或 full 执行镜像。桌面连接公开 HTTPS origin，代理 URL 不携带后台或本机凭据。
 
-| 目录 | 内容 |
-|------|------|
-| [docker/](docker/README_CN.md) | 镜像构建、Compose、容器入口 |
-| [helm/octop/](helm/octop/README_CN.md) | Helm chart：pgvector、多个 Octop 副本、统一入口 |
-
-`fnos/docker/` 仍留在原处。那是飞牛安装包，不是这里的镜像构建目录。
+源码依赖与 wheel 集合见[产品说明](../docs/product-applications.md)。旧 cluster/mobile Compose 和 FnOS 全功能包已退役。当前 Chart 只运行一个网关，不能据此宣称多副本恢复已验收。

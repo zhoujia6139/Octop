@@ -46,41 +46,8 @@ def portable_name(os_name: str, arch: str, version: str) -> str:
     return f"Octop-portable-{os_name}-{arch}-{version}.zip"
 
 
-def fnos_assets(version: str) -> tuple[tuple[str, str], ...]:
-    """FnOS download links in release-page order."""
-    return (
-        (f"Octop-fnos-docker-lite-{version}.fpk", "Docker lite (x86 and ARM)"),
-        (
-            f"Octop-fnos-docker-{version}.fpk",
-            "Docker full (desktop, OCR, local models; x86 and ARM)",
-        ),
-        (f"Octop-fnos-native-amd64-{version}.fpk", "Native x86_64"),
-        (f"Octop-fnos-native-arm64-{version}.fpk", "Native ARM64 (no Docker)"),
-    )
-
-
-def docker_image_section(version: str, *, lite: bool, full: bool) -> str:
-    lines = ["### Docker image", ""]
-    if lite:
-        lines.append(f"- Lite: `ghcr.io/tencentcloud/octop:{version}` (`:latest`)")
-    if full:
-        lines.append(f"- Full: `ghcr.io/tencentcloud/octop:{version}-full` (`:full`)")
-    if len(lines) == 2:
-        return ""
-    return "\n".join(lines)
-
-
-def fnos_section(version: str, present: set[str] | None) -> str:
-    """Return the fnOS block. ``present is None`` keeps every package."""
-    tag, _version = split_tag(version)
-    links = [
-        md_link(label, tag, filename)
-        for filename, label in fnos_assets(version)
-        if present is None or filename in present
-    ]
-    if not links:
-        return ""
-    return "### fnOS NAS\n- " + " | ".join(links)
+def docker_image_section(version: str) -> str:
+    return f"### Docker image\n\n- Cloud: `ghcr.io/tencentcloud/octop:{version}` (`:latest`)"
 
 
 def render_download_section(raw_version: str) -> str:
@@ -106,7 +73,7 @@ def render_download_section(raw_version: str) -> str:
             "",
             "## Downloads",
             "",
-            "Desktop installers bundle the browser extra only. Desktop control, OCR, and local embedding stay on the Docker full image.",
+            "Desktop installers bundle the local Agent runtime. The Docker image runs cloud management and the model gateway. Portable archives are authenticated sidecars for diagnostics, not browser chat servers.",
             "",
             "### Windows",
             "",
@@ -135,9 +102,7 @@ def render_download_section(raw_version: str) -> str:
             "#### Portable",
             f"- {linux64_zip} | {linux_arm_zip}",
             "",
-            docker_image_section(version, lite=True, full=True),
-            "",
-            fnos_section(version, None),
+            docker_image_section(version),
             "",
         ]
     )
@@ -165,21 +130,10 @@ def _replace_section(body: str, heading: str, replacement: str) -> str:
 
 
 def patch_release_body(body: str, raw_version: str, present: Iterable[str]) -> str:
-    """Keep desktop links, and keep only the FnOS packages that were uploaded.
-
-    The default tag is the lite image. The full tag is published only when
-    both CPU architectures exist, which is also when the full package is built.
-    """
+    """Keep cloud image links independent of the retired FnOS package pipeline."""
     _tag, version = split_tag(raw_version)
-    names = {Path(name).name for name in present}
-    lite_name = f"Octop-fnos-docker-lite-{version}.fpk"
-    full_name = f"Octop-fnos-docker-{version}.fpk"
-    updated = _replace_section(
-        body,
-        "Docker image",
-        docker_image_section(version, lite=lite_name in names, full=full_name in names),
-    )
-    return _replace_section(updated, "fnOS NAS", fnos_section(version, names))
+    updated = _replace_section(body, "Docker image", docker_image_section(version))
+    return _replace_section(updated, "fnOS NAS", "")
 
 
 def _asset_names(payload: dict[str, object]) -> list[str]:
@@ -204,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--sync-notes",
         type=Path,
-        help="Rewrite Docker/fnOS sections from a `gh release view --json body,assets` file.",
+        help="Update cloud-image links and remove retired fnOS sections from a `gh release view --json body,assets` file.",
     )
     args = parser.parse_args(argv)
     if args.sync_notes is None:

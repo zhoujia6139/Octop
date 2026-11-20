@@ -6,9 +6,7 @@
 
 P5 使用 `octop-harness` 的 `BackendWorkspace.for_local_directory/scan_sync_files/read_sync_chunk/write_sync_chunk/commit_sync_file/remove_sync_file`，以及 `octop-memory` 的 `Memory.sync_changes/restore_sync_changes/close`。这些接口分别在两个运行库实现，没有在 Octop 中扫描记忆私有表或复制文件后端实现。
 
-目标发布版本为 **octop-harness 1.0.12、octop-memory 1.0.6**。本轮准备候选包与本地联调，正式发布、Octop 依赖约束及 `uv.lock` 的更新是发布后的步骤；不能把当前仓库的旧锁文件视为已经包含 P5 运行库。缺少接口时，桌面选择账号会返回 `LOCAL_RUNTIME_UPGRADE_REQUIRED`，不会静默跳过同步。
-
-联调可以使用两个候选源码 checkout：先按现有锁文件安装 Octop，再 `uv pip install --no-deps -e <harness-checkout> -e <memory-checkout>`，随后使用 `UV_NO_SYNC=1 make all`。正式部署应安装已发布版本并重新生成锁文件，不依赖相邻 checkout，也不直接修改 site-packages。
+当前运行库源码维护在 **vendor/octop-harness（本地 API 版本 1.0.12）、vendor/octop-memory（1.0.6）**。P7 按用户要求撤销了运行库远端发布方案，使用 `tool.uv.sources` 与 `uv.lock` 的仓库内相对路径。普通 `uv sync --frozen` 即加载这两份源码，无需候选 wheel、相邻 checkout 或 `UV_NO_SYNC`。打包从同一源码构建 wheel 并随产品一起交付；不宣称版本已发布 PyPI。缺少接口时，桌面选择账号仍返回 `LOCAL_RUNTIME_UPGRADE_REQUIRED`。
 
 ## 同步内容
 

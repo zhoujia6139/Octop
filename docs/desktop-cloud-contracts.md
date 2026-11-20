@@ -179,7 +179,7 @@ uv run --no-dev --extra local-runtime octop-local --home /path/to/local --port 8
 
 P0 交付物是本合同、能力审计和实现前置条件。P1 验收的是新应用与 Harness 最小运行链，旧定义 CRUD 不计入新资源管理成果。新版认证、资源发布、计费、同步和产品 UI 分别属于后续阶段。
 
-P2 已获用户授权，实施了密码 + TOTP MFA（含恢复码）、云端单设备授权、Electron 安全凭证交接与本地账号隔离，详见 [cloud-identity.md](cloud-identity.md)。新云端身份 schema 为 v2；本地沿用 v1，由已验证的账号身份选择各自的数据库与工作区。P3 已接入平台模型网关、原生协议、额度和结算，见 [platform-models.md](platform-models.md)。P4 已完成资源发布/分配、资源 outbox、安装回执和个人副本，见 [platform-resources.md](platform-resources.md)；P5 增加逻辑备份与文件分片，当前云端 schema v5、本地 v3；P6 已完成产品界面和生命周期的候选运行库验收，见 [product-applications.md](product-applications.md)。运行库正式发布/依赖锁定待执行，P7 未开始。
+P2 已获用户授权，实施了密码 + TOTP MFA（含恢复码）、云端单设备授权、Electron 安全凭证交接与本地账号隔离，详见 [cloud-identity.md](cloud-identity.md)。新云端身份 schema 为 v2；本地沿用 v1，由已验证的账号身份选择各自的数据库与工作区。P3 已接入平台模型网关、原生协议、额度和结算，见 [platform-models.md](platform-models.md)。P4 已完成资源发布/分配、资源 outbox、安装回执和个人副本，见 [platform-resources.md](platform-resources.md)；P5 增加逻辑备份与文件分片，当前云端 schema v5、本地 v3；P6 已完成产品界面和生命周期的候选运行库验收，见 [product-applications.md](product-applications.md)。P7 已开始，依赖改为仓库内 vendor 源码，普通 frozen 安装生效；最终验收记录见 Plan.md。
 
 P2 审查后直接复用了 Argon2 密码策略、TOTP 原语、恢复码生成/规范化和 Fernet 能力；MFA 包的旧服务入口改为按需导出以切断 SharedServices 依赖。新 Token 采用独立 purpose 的随机不透明凭证、服务端摘要和实时身份校验，未迁入旧 JWT 的离线角色信任。所选登录方式已由用户明确为密码 + TOTP，不迁入 SSO、LDAP 或 Passkey。Electron 复用 DeviceCredentialStore/safeStorage，但云端长期凭证与旧 loopback 凭证存储隔离。
 
@@ -187,4 +187,4 @@ P2 审查后直接复用了 Argon2 密码策略、TOTP 原语、恢复码生成/
 
 ## P5 接入
 
-P5 候选补齐 `BackendWorkspace` 的无需模型/no-follow/分片传输接口及 `Memory.sync_changes/restore_sync_changes/close`，分别由运行库自身实现。Harness 的可选 `aclose(wait_for_memory=True)` 提供恢复前的记忆写入排空边界。候选目标为 Harness 1.0.12、Memory 1.0.6；正式发布与 Octop 依赖锁定尚未执行，不能把旧锁文件或相邻源码视为已发布依赖。云端 v5、本地 v3 的实际合同及 API 见 [同步与恢复](platform-sync.md)。
+P5 候选补齐 `BackendWorkspace` 的无需模型/no-follow/分片传输接口及 `Memory.sync_changes/restore_sync_changes/close`，分别由运行库自身实现。Harness 的可选 `aclose(wait_for_memory=True)` 提供恢复前的记忆写入排空边界。P7 将这两库纳入 `vendor/`，本地版本为 Harness 1.0.12、Memory 1.0.6；uv 使用本地源码路径，打包构建相应 wheel，不再以远端发布为前置条件。云端 v5、本地 v3 的实际合同及 API 见 [同步与恢复](platform-sync.md)。

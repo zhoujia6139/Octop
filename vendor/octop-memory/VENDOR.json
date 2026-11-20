@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/TencentCloud/octop-memory",
+  "base_commit": "c951d7a9a4548c7561060281c29175692341b2d5",
+  "local_changes": "P5 synchronization APIs and lifecycle; maintained locally, not published."
+}

@@ -1,33 +1,6 @@
 name: Docker Publish
 
-# 仅在版本标签（v*）上构建并同步发布镜像到 Docker Hub 与 GHCR。
-# 文档与对外引用统一使用：ghcr.io/tencentcloud/octop
-# （Hub 仍用 DOCKERHUB_* secrets 同步推送。）
-#
-# 架构：ubuntu-latest 打 linux/amd64，ubuntu-24.04-arm 打 linux/arm64。
-# 每个架构先在本机启动镜像并跑 live 启动测试，通过后才推送该架构 tag，
-# 再合并为 :{version} / :latest（精简版，不含桌面、本地向量和 OCR）。
-# 完整版打 :{version}-full / :full。飞牛 Docker 版 FPK 各用一个标签，
-# NAS 按本机架构拉取对应镜像层。某一架构启动失败（例如 ARM 上 Illegal
-# instruction / 退出码 132）只丢掉该架构，不挡住另一架构和后续 FPK。
-#
-# 触发路径：
-#   1. 人工推送 v* tag → on.push.tags
-#   2. Auto Tag 用 GITHUB_TOKEN 推 tag 后显式 workflow_dispatch（token push 不会触发 push 工作流）
-#   3. 在修复分支 Run workflow，填 tag=vX.Y.Z。workflow_dispatch 检出所选 ref，
-#      补构建能带上 Dockerfile 修复；tag 只决定镜像版本。tag push 仍检出该 tag。
-#
-# 注意：workflow_dispatch 下 metadata-action 的 type=semver 不可靠，
-# 必须从 tag / 输入显式解析版本号。
-# 不要把 DOCKERHUB_USERNAME 放进 job outputs：跨 job 传递会被抹成空，
-# 导致只推 GHCR，合并清单时再对空 Hub 名失败。
-#
-# FnOS FPK 由 Release 成功后自动 dispatch，并等待本工作流推送的 :{version} 就绪。
-#
-# 拉取示例：
-#   docker pull ghcr.io/tencentcloud/octop:latest
-#   docker pull ghcr.io/tencentcloud/octop:0.9.28
-#   docker pull ghcr.io/tencentcloud/octop:0.9.28-full
+# Cloud-only image; both native architectures must pass boot before publication.
 on:
   push:
     tags:
@@ -96,19 +69,11 @@ jobs:
           - runner: ubuntu-latest
             platform: linux/amd64
             arch: amd64
-            variant: full
-          - runner: ubuntu-latest
-            platform: linux/amd64
-            arch: amd64
-            variant: lite
+            variant: cloud
           - runner: ubuntu-24.04-arm
             platform: linux/arm64
             arch: arm64
-            variant: full
-          - runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            arch: arm64
-            variant: lite
+            variant: cloud
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -140,9 +105,9 @@ jobs:
           images: |
             ${{ env.DOCKERHUB_USER != '' && format('{0}/octop', env.DOCKERHUB_USER) || '' }}
             ${{ needs.prepare.outputs.ghcr }}
-          # 单架构中间 tag。lite → :{version}-{arch}；full → :{version}-full-{arch}。
+          # Only the cloud product has an image tag.
           tags: |
-            type=raw,value=${{ needs.prepare.outputs.version }}${{ matrix.variant == 'full' && '-full' || '' }}-${{ matrix.arch }}
+            type=raw,value=${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
 
       # load 与 registry 导出不能同时开。先载入本机做启动测试，通过后再 docker push。
       # docker 导出不支持 provenance，这里关掉，避免 --load 失败。
@@ -158,7 +123,6 @@ jobs:
           platforms: ${{ matrix.platform }}
           # NODE_MAX_OLD_SPACE_SIZE：Vite chunk 渲染峰值约 2GB，2048 会偶发退出码 134。
           build-args: |
-            OCTOP_IMAGE_VARIANT=${{ matrix.variant }}
             NODE_MAX_OLD_SPACE_SIZE=4096
           tags: |
             octop:ci-${{ matrix.variant }}
@@ -174,19 +138,18 @@ jobs:
       - name: Report image size
         run: |
           docker image inspect "octop:ci-${{ matrix.variant }}" \
-            --format '::notice::${{ matrix.variant }} ${{ matrix.arch }} {{.Size}} bytes'
+            --format '::notice::cloud ${{ matrix.arch }} {{.Size}} bytes'
 
       - name: Boot-test image before publish
         env:
           OCTOP_TEST_IMAGE: octop:ci-${{ matrix.variant }}
-          OCTOP_IMAGE_VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
           uv venv /tmp/octop-docker-test
           uv pip install --python /tmp/octop-docker-test/bin/python pytest pytest-asyncio
           # 启动测试只调 docker。--noconftest 避免加载 integration conftest（需要 httpx / octop）。
-          /tmp/octop-docker-test/bin/pytest \
-            tests/integration/test_docker_image_boot.py::test_docker_image_runs_on_this_cpu_and_stays_disabled \
+          uv run --no-project --python /tmp/octop-docker-test/bin/python --with pytest --with pytest-asyncio pytest \
+            tests/integration/test_docker_image_boot.py \
             -q --tb=short --noconftest
 
       - name: Push image
@@ -204,8 +167,8 @@ jobs:
   merge:
     name: Multi-arch manifest
     needs: [prepare, build]
-    # ARM runner 偶发失败时仍发布已有架构，避免卡住 :{version} 与 Docker FPK。
-    if: always() && needs.prepare.result == 'success' && !cancelled()
+    # Require both native architecture builds and boot checks.
+    if: success()
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -234,44 +197,9 @@ jobs:
           HUB: ${{ env.DOCKERHUB_USER != '' && format('{0}/octop', env.DOCKERHUB_USER) || '' }}
         run: |
           set -euo pipefail
-          publish_variant() {
-            local mid="$1" tag_a="$2" tag_b="$3" required="$4"
-            local reg arch ref
-            for reg in "$GHCR" "$HUB"; do
-              [ -n "$reg" ] || continue
-              local -a sources=()
-              for arch in amd64 arm64; do
-                ref="${reg}:${VER}${mid}-${arch}"
-                if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
-                  sources+=("$ref")
-                else
-                  echo "::warning::missing ${ref}"
-                fi
-              done
-              if [ "${#sources[@]}" -eq 0 ]; then
-                if [ "$required" = "yes" ]; then
-                  echo "::error::No platform images published for ${reg}:${tag_a}"
-                  exit 1
-                fi
-                echo "::warning::skip ${reg}:${tag_a} (no platform images)"
-                continue
-              fi
-              if [ "${#sources[@]}" -lt 2 ]; then
-                echo "::warning:::${tag_a} is not multi-arch. A package on the missing CPU will not run."
-                # 完整版对外是一份 x86/ARM 通用标签。缺任一架构就不要发，避免装上后拉取失败。
-                if [ "$required" != "yes" ]; then
-                  echo "::warning::skip ${reg}:${tag_a} until both amd64 and arm64 exist"
-                  continue
-                fi
-              fi
-              docker buildx imagetools create \
-                -t "${reg}:${tag_a}" \
-                -t "${reg}:${tag_b}" \
-                "${sources[@]}"
-              echo "=== ${reg}:${tag_a} ==="
-              docker buildx imagetools inspect "${reg}:${tag_a}"
-            done
-          }
-          # 默认标签是精简版。完整版必须显式带 -full，且两个架构都在才发布。
-          publish_variant "" "$VER" latest yes
-          publish_variant "-full" "${VER}-full" full no
+          for reg in "$GHCR" "$HUB"; do
+            [ -n "$reg" ] || continue
+            docker buildx imagetools create -t "${reg}:${VER}" -t "${reg}:latest" \
+              "${reg}:${VER}-amd64" "${reg}:${VER}-arm64"
+            docker buildx imagetools inspect "${reg}:${VER}"
+          done

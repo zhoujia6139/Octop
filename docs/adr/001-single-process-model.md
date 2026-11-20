@@ -1,5 +1,7 @@
 # ADR 001 — Single-Process, No External Queue
 
+> Product assembly superseded by [ADR 004](004-local-agent-cloud-control.md). This document records the retained legacy architecture and is not the current startup/configuration contract.
+
 **Status:** Accepted
 **Date:** 2026-06
 

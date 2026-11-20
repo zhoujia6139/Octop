@@ -337,3 +337,19 @@ verify_no_homebrew_dylibs() {
   echo "[green] dylib check OK (no Homebrew/MacPorts absolute paths)"
   return 0
 }
+
+# Product dependencies come from the source tracked in this checkout, never PyPI.
+build_local_library_wheels() {
+  local destination="$1" project
+  for project in octop-memory octop-harness; do
+    uv build --wheel --out-dir "$destination" "$REPO_ROOT/vendor/$project" >&2
+  done
+}
+
+local_library_wheel_paths() {
+  local destination="$1" project version
+  for project in octop-memory octop-harness; do
+    version="$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$REPO_ROOT/vendor/$project/pyproject.toml" | head -1)"
+    printf '%s/%s-%s-py3-none-any.whl\n' "$destination" "${project//-/_}" "$version"
+  done
+}

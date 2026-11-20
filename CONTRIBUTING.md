@@ -4,14 +4,16 @@ Thank you for your interest in contributing! Octop is the control-plane applicat
 
 ## Getting started
 
-**Prerequisites:** Python 3.12+, Node.js 18+, [uv](https://docs.astral.sh/uv/)
+**Prerequisites:** Python 3.12+, Node.js 24+, [uv](https://docs.astral.sh/uv/)
 
 ```bash
 git clone https://github.com/TencentCloud/Octop.git octop
 cd octop
 make install          # backend dev dependencies
 make install-hooks    # once per clone: pre-commit runs make all + dashboard build
-make all              # format-all + backend lint + typecheck + test (ship bar)
+make lint typecheck
+make build-frontend
+make test-product     # current product and direct dependencies
 ```
 
 For frontend work (separate terminal):
@@ -23,6 +25,8 @@ make typecheck-frontend
 make check-all        # full stack quality gate
 ```
 
+Harness and Memory are maintained as source in `vendor/` and selected by uv path dependencies. Do not replace them with registry installations or sibling checkout paths. Distribution uses the wheel set and locked role requirements from `dist/product/`; see [product setup](docs/product-applications.md). The cloud extra installs no execution components.
+
 ## Development workflow
 
 | Command | Description |
@@ -32,7 +36,8 @@ make check-all        # full stack quality gate
 | `make all` | `format-all` + backend lint + typecheck + test |
 | `make check-all` | Full stack quality gate |
 | `make dev` | Start frontend + backend dev servers |
-| `make build` | Build dashboard + Python wheel |
+| `make build` | Build dashboard + Octop/local-library wheel set |
+| `make test-product` | Current cloud/desktop product and direct dependency tests |
 
 ## Branching
 
@@ -59,8 +64,8 @@ hotfix/* ──PR──► main (+ tag) and ──PR──► develop
 
 1. Fork (if needed) and create a feature branch from **`develop`**
 2. Open the PR with base **`develop`** (not `main`, unless it is a release or hotfix)
-3. Add or update tests for behavior changes — CI runs on **Linux and Windows**; follow the cross-platform rules in [AGENTS.md](AGENTS.md) §7 (prefer `tmp_path` / `pathlib`, `fake_bin_path` for mocked binaries, `posix_only` for Unix-only cases)
-4. Ensure `make install-hooks` is enabled locally; run `make all` (backend) or `make check-all` (full stack) before submitting — pre-commit enforces the same gate
+3. Add or update tests for behavior changes — CI defines **Linux, Windows and macOS** jobs; follow the cross-platform rules in [AGENTS.md](AGENTS.md) (prefer `tmp_path` / `pathlib`, `fake_bin_path` for mocked binaries, `posix_only` for Unix-only cases)
+4. Use `make lint typecheck` and relevant tests (`make test-product` for the product contract), plus affected UI/shell checks. The current task excludes unrelated legacy tests. Before an authorized commit, install hooks and satisfy their gate; never bypass a failing hook.
 5. Update `CHANGELOG.md` when user-facing behavior changes
 6. Open a PR with a clear description and test plan
 
@@ -151,7 +156,7 @@ When using AI-assisted coding, **make sure both sides understand the same thing*
 
 1. Cut `release/x.y.z` from latest `develop` (version bump + CHANGELOG on that branch)
 2. Open PR: `release/x.y.z` → `main` and merge when green
-3. Tag `v<version>` on **main tip** and push — GitHub Actions builds, publishes to PyPI, and creates the GitHub Release
+3. Tag `v<version>` on **main tip** and push — GitHub Actions builds the product wheel set (including locally maintained libraries), containers/installers and GitHub Release; these local library versions are not published to PyPI
 4. Delete `release/x.y.z`; Actions syncs `main` → `develop` (or opens `chore/sync-develop-after-*` if merge conflicts / branch protection)
 
 Agent-assisted publish: `.cursor/skills/publish` (`/publish <version>`).
@@ -168,14 +173,16 @@ Branch from `main` → PR into `main` (tag if shipping a patch) → PR into `dev
 
 ## 环境搭建
 
-**前置条件：** Python 3.12+、Node.js 18+、[uv](https://docs.astral.sh/uv/)
+**前置条件：** Python 3.12+、Node.js 24+、[uv](https://docs.astral.sh/uv/)
 
 ```bash
 git clone https://github.com/TencentCloud/Octop.git octop
 cd octop
 make install
 make install-hooks    # 每个 clone 执行一次：提交前跑 make all + 前端 build
-make all              # format-all + 后端 lint / typecheck / test
+make lint typecheck
+make build-frontend
+make test-product     # 当前产品与直接依赖专项
 ```
 
 前端开发（另开终端）：
@@ -206,7 +213,7 @@ make check-all        # 全栈质量门禁
 1. 从 **`develop`** 创建特性分支
 2. PR 的 base 选 **`develop`**（release / hotfix 除外）
 3. 补充测试（CI 同时跑 **Linux / Windows**，路径与假二进制遵循 [AGENTS.md](AGENTS.md) §7）
-4. 本地执行过 `make install-hooks`；提交前 `make all` 或 `make check-all` 必须绿（hooks 会强制执行）
+4. 执行 lint/typecheck 与相关专项（产品合同用 `make test-product`），不为本任务运行无关旧功能测试。授权提交前启用并满足 hooks，不绕过失败的检查。
 5. 用户可见变更时更新 `CHANGELOG.md`
 6. 提交 Pull Request
 

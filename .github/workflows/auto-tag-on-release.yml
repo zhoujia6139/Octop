@@ -63,16 +63,8 @@ jobs:
           git tag "$tag"
           git push origin "$tag"
 
-      # GITHUB_TOKEN tag pushes do not cascade to other workflows. Explicitly
-      # dispatch Release / Docker Publish / Desktop Package / Helm Publish
-      # (workflow_dispatch is exempt). FnOS FPK is cascaded from Release after
-      # the GitHub Release exists (reuses Release wheel + waits for GHCR image
-      # from Docker Publish). Helm does not wait on the image: the chart only
-      # records the image tag. Pass tag= so a dispatch whose ref is not refs/tags/v*
-      # still satisfies the workflow's job guard.
-      # Desktop and FnOS upsert their packages onto the same v* GitHub Release
-      # after it exists (FnOS is dispatched from Release.yml). Each of those
-      # workflows then uploads its own assets to COS octop/release/<version>/.
+      # GITHUB_TOKEN tag pushes require explicit dispatch. Legacy FnOS packages
+      # are retired; product wheel sets, cloud images and desktop installers share a tag.
       - name: Trigger Release, Docker, Desktop, and Helm Publish
         if: steps.check_tag.outputs.should_publish == 'true'
         env:

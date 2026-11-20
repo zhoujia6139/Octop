@@ -46,9 +46,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-            - name: initdb
-              mountPath: /docker-entrypoint-initdb.d
-              readOnly: true
           readinessProbe:
             exec:
               command:
@@ -69,10 +66,6 @@ spec:
             timeoutSeconds: 5
           resources:
             {{- toYaml .Values.postgresql.resources | nindent 12 }}
-      volumes:
-        - name: initdb
-          configMap:
-            name: {{ include "octop.fullname" . }}-pgvector-init
   volumeClaimTemplates:
     - metadata:
         name: data

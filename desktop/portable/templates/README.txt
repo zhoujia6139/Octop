@@ -1,41 +1,27 @@
-Octop green portable package
-============================
+Octop local runtime portable payload
+===================================
+This archive contains CPython and the desktop Agent sidecar dependencies,
+including wheels built from this product's local Harness/Memory source.
+Use Octop Desktop for chat, cloud login and OS credential storage.
 
-Extract this zip anywhere. It includes a portable CPython runtime and Octop
-dependencies. No system Python install is required.
+Diagnostic launch
+-----------------
+macOS/Linux: ./start.sh
+Windows:     start.bat
 
-Start
------
-  macOS / Linux:  ./start.sh
-  Windows:        start.bat
-
-Listen address and port come from data/config.json (default
-http://127.0.0.1:8088). Data dir = ./data (OCTOP_HOME).
-
-  ./start.sh --home /path/to/data
-  ./start.sh --host 0.0.0.0 --port 8088
-
---host and --port are saved back to config.json. Omit them to keep the file.
-
-First launch follows the normal Octop setup wizard (create admin password).
+Default: authenticated loopback API on a random port. Supply a strong
+OCTOP_LOCAL_API_TOKEN for manual API requests. No cloud/setup wizard starts.
+Data root: ./data (OCTOP_HOME), with local/config.json and account namespaces.
+--home selects the data root. --host/--port are process-only overrides;
+local binding must remain loopback. No setting is silently persisted.
 
 Layout
 ------
-  runtime/     portable CPython
-  packages/    Octop + locked dependencies (site-packages)
-  launch.py    entry bootstrap (loads packages/ + Windows pywin32 DLLs)
-  start.sh / start.bat
-  README.txt
-  VERSION.txt
+runtime/      portable CPython
+packages/     installed product and local library wheels (no editable paths)
+launch.py     .pth processing and Windows pywin32 DLL bootstrap
+start.sh / start.bat, VERSION.txt, README.txt
 
-Notes
------
-  Do not set PYTHONPATH=packages. Always start via start.sh / start.bat /
-  launch.py so .pth files (pywin32) are processed.
-
-  macOS: if Gatekeeper quarantines the unzipped folder:
-
-    xattr -dr com.apple.quarantine .
-
-Windows: if import pywintypes fails, rebuild from a current
-  green package (launch.py + pywin32 DLL copy). Do not set PYTHONPATH manually.
+Always use launch.py/start.sh/start.bat rather than PYTHONPATH=packages alone.
+Quit/suspend interrupts local work. Unacknowledged cloud data remains pending;
+wake/restart never resumes tools or pending approvals automatically.

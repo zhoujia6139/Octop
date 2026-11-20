@@ -48,3 +48,10 @@ marketplace
 *.log
 logs
 agent-transcripts
+
+# Cloud reads only the frozen local-source metadata, never library implementations.
+vendor/**
+!vendor/octop-harness/
+!vendor/octop-harness/pyproject.toml
+!vendor/octop-memory/
+!vendor/octop-memory/pyproject.toml

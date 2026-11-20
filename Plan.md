@@ -1,6 +1,6 @@
 # Octop 桌面 Agent 与云端管理改造计划
 
-> 日期：2026-11-19。状态：P0–P4 已完成验收；P5、P6 已完成候选运行库下的功能验收；运行库正式发布及 Octop 依赖锁定待执行；P7 未开始。
+> 日期：2026-11-20。状态：P0–P6 功能验收完成；P7 主体实现与本机集成/打包验收完成，Windows/Linux/Intel 等未运行平台及真实 OS 休眠仍待验收。运行库按用户最新要求改为仓库内 vendor 源码依赖，不再推进远端发布。
 >
 > 本次修订采用「基于 octop-harness 建立新的云端与桌面应用层，选择性迁入 Octop 成熟能力」的路线。本文记录已确认的产品边界，并给出后续实现顺序。勾选项表示实现与验收均完成；尚未验收的探索性代码不计为完成。模块名、接口名和表名是设计建议，实施时结合现有代码确定，不代表已存在。
 
@@ -333,7 +333,7 @@ P4 验收记录（2026-11-19）：
 - 后端验收：最终 `make all` 通过，6054 passed、103 skipped；Ruff/格式与 mypy（731 个源文件）通过。最终资源与包专项 `uv run pytest tests/integration/test_platform_resources.py tests/unit/resources -q -x --tb=short` 为 49 passed、21 skipped；跳过项为未设置 PG 环境的参数化用例，已另行实测。身份、模型、独立应用、迁移与 i18n 的组合回归另有 182 passed、57 skipped，之后新增的删除/额度和 Unicode 碰撞用例均已纳入最终全量检查。
 - 数据库与隔离验收：临时 PostgreSQL 17 下 `uv run pytest tests/integration/test_platform_resources.py tests/integration/test_platform_models.py tests/integration/test_cloud_identity.py tests/unit/db/test_application_migrations.py tests/unit/resources -q -x --tb=short` 为 147 passed、2 skipped，含 SQLite/PG 两种数据库；两个跳过项为 Embedding 流式组合。仅安装 cloud extra 的全新环境没有 Harness、Memory、Browser、Gateway 或 LangChain，实际完成发布、分配、固定依赖下载、实例授权与 schema/OpenAPI 检查；测试 schema、容器及临时凭证已清理。
 - 前端与文档：仅增加错误码的 zh/en 文案，Dashboard `npx tsc -b`、`npm run lint`（0 errors、75 条现有 warnings）和 `make build-frontend` 通过；未修改 Electron 或产品页面。Scalar HTML、OpenAPI 的 summaries、请求/响应类型及鉴权已检查；本轮未宣称完成 GUI 渲染、OS keychain 或原生安装器验收，Linux/Windows 实机/CI 与产品集成仍按 P7 验收。配置与接口见 [docs/platform-resources.md](docs/platform-resources.md)，身份、模型和共享合同文档已同步更新。
-- 暂停点（P4 验收时）：P4 完成后停在 P5 之前；当时 P5–P7 尚未开始。当前 P5 的候选包验收及 P6 记录见下节，P7 未开始。
+- 暂停点（P4 验收时）：P4 完成后停在 P5 之前；当时 P5–P7 尚未开始。当前 P5 的候选包验收及 P6 记录见下节，P7 当前状态见下节。
 
 ### P5：聊天、文件与记忆可靠同步
 
@@ -363,10 +363,10 @@ P5 实施记录（2026-11-20，候选包验收完成，发布待执行）：
 - 测试清理：专用 PostgreSQL 容器及测试 schema、临时 DSN、cloud/local 隔离环境已清理；保留候选包和验证日志，未触碰现有其他容器。
 - 发布准备额外交付：两个运行库分别位于相邻 `octop-harness-p5`、`octop-memory-p5` worktree；候选包、校验清单、发布说明、待应用的 Octop 依赖补丁及 Memory Wiki 八页的待推送补丁归档在 `dist/p5-runtime-candidates/`。PyPI 读取核实目标版本当时尚不存在；未提交、推送、打 tag、上传或推送 Wiki。
 
-发布门槛（本轮准备完成，实际发布尚待明确授权）：
+原 P5 发布准备（历史记录；P7 已按用户要求撤销远端发布路线）：
 
 - [x] 准备并验证 Harness 1.0.12、Memory 1.0.6 的源码、说明、版本、wheel、sdist 和 SHA-256。
-- [ ] 按各仓库发布流程正式发布运行库，再应用 Octop 最低版本补丁并更新 `uv.lock`、验证普通 `uv sync --frozen`。旧锁文件目前仍然安装 P4 的运行库，因此不能将当前默认锁定状态视为已经完成 P5 的正式依赖切换。
+- （已撤销）原计划先发布运行库，再更新 Octop pin/lock。P7 改为 `vendor/octop-harness`、`vendor/octop-memory` 的本地源码依赖，最低 API 版本及 root lock 已同步，普通 `uv sync --frozen` 已验证。相邻 P5 worktree/候选归档保留为历史准备材料，不参与运行。
 
 
 ### P6：接入产品 UI、生命周期并退役旧入口
@@ -392,17 +392,33 @@ P6 实施记录（2026-11-20，候选运行库功能验收完成）：
 - 前端：`npx tsc -b`、`npm run lint`（0 errors，75 条原有 warnings）、`make build-frontend` 及最终 `npm run build` 通过；`npm test -- src/api/product/client.test.ts src/pages/Product/Workspace.test.tsx src/pages/Product/ProductApp.test.tsx`：**10 passed**。Node 24.18.0 / pnpm 12.15.0 下 Electron typecheck/build 及会话、生命周期、代理/relay 相关 **32 个用例**通过；最终只运行相关测试，未重跑无关 Electron 用例。
 - 真实浏览器：Chrome headless 运行实际云端和构建产物，验证密码登录、用户创建、供应商/逻辑模型配置、Agent 与 skill 发布、精确额度、MFA 启用/恢复码登录及角色隔离，无付费模型调用。修复 MFA 变更后返回登录时短暂表单被加载状态重置的竞态。仅安装 cloud extra 的全新 frozen 隔离环境也验证初始化/登录、管理页、CLI、健康和文档，确认未安装/导入四个执行库、LangChain 或旧编排。
 - 测试范围：遵循用户本轮补充要求，仅运行实际改动及直接依赖相关用例，未执行包含无关旧功能用例的 `make all` 全套 testcase。安装器、原生 OS keychain、各平台真实休眠事件、镜像/Chart 发布矩阵与完整桌面全流程留给 P7，未宣称本轮完成。
-- 依赖门槛：本轮 `uv.lock` 因 extras 退役及开发依赖分组重新生成，但 Harness/Memory 正式版本仍锁定 P4；未发布两个运行库，也未提交/推送。运行库候选包仍可用，P5 发布材料中的 Octop 依赖补丁基于 P5，应在正式发布时按 P6 当前结构重新生成并更新 lock。P7 未开始。
+- 依赖门槛：本轮 `uv.lock` 因 extras 退役及开发依赖分组重新生成，但 Harness/Memory 正式版本仍锁定 P4；未发布两个运行库，也未提交/推送。运行库候选包仍可用，P5 发布材料中的 Octop 依赖补丁基于 P5，应在正式发布时按 P6 当前结构重新生成并更新 lock。P7 当前状态见下节。
 
 ### P7：集成验收、打包与文档收尾
 
-- [ ] 跑通全流程：「云端创建用户与配置模型 → 桌面登录 → 分配并安装 Agent/skills → 本地聊天与工具 → 模型结算 → 同步 → 重启恢复」。
-- [ ] 验证云端不可用、供应商错误、额度耗尽、设备撤销、安装损坏与同步积压的实际行为。
-- [ ] 更新 Python wheel、Electron 便携包、云端部署示例和 CI，使新应用的各自安装、启动与依赖隔离可验证；云端包不以桌面执行组件为运行前提。
-- [ ] 更新 `docs/architecture.md`、相关 ADR、API/CLI 说明、桌面文档与 `AGENTS.md`，去掉与最终架构冲突的运行假设。
-- [ ] 完成下节要求的检查，记录具体命令、环境、结果及未覆盖的平台；不提交或推送，除非用户另行要求。
+- [x] 跑通全流程：「云端创建用户与配置模型 → 桌面登录 → 分配并安装 Agent/skills → 本地聊天与工具 → 模型结算 → 同步 → 重启恢复」。
+- [x] 验证云端不可用、供应商错误、额度耗尽、设备撤销、安装损坏与同步积压的实际行为。
+- [x] 更新 Python wheel、Electron 便携包、云端部署示例和 CI，使新应用的各自安装、启动与依赖隔离可验证；云端包不以桌面执行组件为运行前提。
+- [x] 更新 `docs/architecture.md`、相关 ADR、API/CLI 说明、桌面文档与 `AGENTS.md`，去掉与最终架构冲突的运行假设。
+- [ ] 完成下节全部平台验收；本机必要检查及结果已记录，Windows/Linux/Intel 原生安装器、远端 CI 与真实 OS 休眠尚未运行，保持待验收。不提交或推送，除非用户另行要求。
 
-验收：实现与文档一致，所有必要检查通过，首期范围之外的功能没有成为运行依赖。
+验收：实现与文档一致，所有必要检查通过，首期范围之外的功能没有成为运行依赖。当前只将本机已实测范围计为验收，不把 CI 配置、模拟生命周期或构建安装器等同于其他平台/真实睡眠事件已通过。
+
+P7 实施记录（2026-11-20，本地实现与本机验收）：
+
+- **用户范围调整**：曾授权准备按仓库流程发布两库；随后明确改为「不需要发布，在本地修改即可」，并选择仓库内 vendor 源码。最终未提交、推送、打 tag、发布 PyPI 或推送 Wiki。未修改原相邻库 checkout 或 P5 worktree 的代码。
+- **本地依赖**：将 P5 已验收的两库代码、许可证、测试和文档纳入 `vendor/`，`VENDOR.json` 记录 upstream/base。Octop 的 `tool.uv.sources` / `uv.lock` 使用相对 editable 路径，最低本地 API 版本为 Harness 1.0.12、Memory 1.0.6；Harness 自身 Memory 依赖也改为相邻 vendor 源码并更新 lock。普通 `uv sync --frozen` 与导入路径已核实，不再依赖候选 wheel 覆盖或 `UV_NO_SYNC`。
+- **全流程与故障**：`tests/integration/test_product_journey.py` 启动生产 CLI 的独立 cloud/local 进程，通过真实 HTTP 供应商 stub 验证建用户、模型/费率/预算、发布分配/安装、真实 Harness 工具闭环、两次结算、同步和重启不重放；供应商拒绝、额度前置拒绝、实际停掉云端后文件积压/重连、重启账本不变和设备撤销均通过。现有资源/同步专项继续覆盖损坏安装保留旧树、内容校验、响应丢失、显式恢复与跨账号拒绝。
+- **wheel / sdist**：`scripts/build-product.sh` 从同一 vendor 源码构建库 wheel，输出 Octop wheel/sdist、角色锁定 requirements、来源 manifest 与 SHA256SUMS 到 `dist/product/`；不清除 P5 归档。单个 Octop wheel 不携带 uv 的源码映射，产品按 wheel 集合交付；第三方 requirements 排除本地库，两库必须以明确 wheel 文件安装，避免同版本远端包参与选择。取消 standalone PyPI 发布链和旧 online-deps 入口，避免重新装回远端库。sdist 包含 vendor，在无 Git checkout 的临时目录实际重建 wheel 成功。
+- **安装隔离**：cloud/local 两个全新 venv 分别按 wheel 集合安装，`scripts/verify_product_install.py` 验证实际 CLI 就绪与边界，`uv pip check` 通过（cloud 38 包、local 163 包）。cloud 无四个执行库、LangChain 或 cron；local 安装文件逐项与构建出的库 wheel 字节一致，没有 editable 源码路径。
+- **便携包与原生包**：darwin-arm64 便携包从 vendor wheel 安装，实际包内 Python 运行 CLI/同步接口校验，通过原生依赖检查后生成 ZIP；Electron 45 / Node 24.18.0 / pnpm 12.15.0 构建 DMG 与桌面 ZIP 成功（未签名/公证）。检查 `.app` 的版本、asar、运行时清单/Python/UI；`hdiutil verify` 校验 DMG 成功。产物在 `desktop/portable/release/` 与 `desktop/src/release/`，未发布。
+- **真实桌面**：`scripts/verify_desktop.py` 使用实际 Electron 窗口与便携 payload、临时云端和确定性供应商，完成登录、发布/安装、UI WS 本地工具闭环、结算、同步、主进程代理控制与退出重启后不新增模型调用。本机实际 OS keychain 加密保存凭据，重启续期成功；截图与日志保存在本机临时验收产物中。没有触发真实 OS 睡眠，没有调用付费供应商。
+- **部署与 CI**：实际构建 cloud-only Docker 镜像并运行启动/初始化/旧路由 404/执行库缺失检查。Helm 改为普通 PostgreSQL、单 gateway 与 Recreate，移除向量/工作区/IM/cron/粘性会话假设；模板验证拒绝 replicaCount=2。CI 定义 Linux/Windows/macOS 的产品、vendor、wheel 安装验证，独立 PG17、镜像与 Chart 检查；桌面保留六平台原生构建。旧 FnOS/full/lite 发布链退役。actionlint 与 Helm lint/render 通过；未提交/推送，未声称远端 CI 或真实集群已运行。
+- **后端验证**：专用 PG17 下 `uv run python <临时 DSN wrapper> make test-product`：**352 passed、2 skipped**，含 SQLite/PG；两个跳过项为既有 Embedding 流式组合。最后增强重启账本比对后 `uv run pytest tests/integration/test_product_journey.py -q -x --tb=short`：**1 passed**。部署/发布链接/launcher/prune 相关专项 **16 passed**；真实 Docker 启动专项 **2 passed**。未运行无关旧功能 testcase。
+- **运行库验证**：实际 vendor 源码下 Harness 文件同步/记忆关闭专项 **23 passed**；Memory 逻辑同步专项（真实 SQLite/PG）**8 passed**。两库 Ruff/格式及 strict mypy 通过，分别为 **207 / 121** 个源文件。Octop Ruff/格式及 mypy **742** 个源文件通过。
+- **前端与壳验证**：Dashboard tsc、相关 Vitest **10 passed**、构建通过；Electron typecheck、会话/凭据/代理/生命周期/提取/环境专项 **55 passed**、build 及本机 DMG/ZIP 构建通过。清除遗留 setup-password 环境注入与其仅验证旧向导的测试；壳不再宣称没有云端账号。
+- **清理**：专用 PG 容器、临时 DSN、隔离安装 venv 与 vendor 检查缓存已清理；保留源码、P5 历史归档、本轮构建产物和验收日志。
+- **未覆盖边界**：Windows/Linux/macOS Intel 及其他 CPU 的真实桌面安装/卸载、其 OS keychain、真实休眠唤醒、真实集群、远端 CI/发布尚未运行；明确保留平台检查表，不将本机 macOS/容器验证推断到它们。没有生产供应商/定价参数，不开展真实计费业务验收。
 
 ## 10. 验证要求
 

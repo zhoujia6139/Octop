@@ -1,12 +1,7 @@
-# Deployment
+# Cloud deployment
 
-> P6：默认部署已切换为独立云端应用。当前可执行入口与首次配置见 [产品说明](../docs/product-applications.md)。下文的旧 full/lite、网页 setup、IM/桌面服务器及 FPK 发布说明属于待 P7 更新的历史记录，不能用于新产品部署。
+Deploy the independent cloud application; Agents execute in Octop Desktop. Start with [Docker](docker/README.md) or [Helm](helm/octop/README.md). Both use the current cloud-only image and explicit first-administrator initialization, not a setup wizard.
 
-[中文](README_CN.md)
+Cloud requires SQLite (persistent volume) or PostgreSQL. It stores accounts/device fences, resources, model ledger and synchronized content. No Agent workspaces, browser/terminal control, IM, cron, vector database or full execution image are required. Desktop connects to the public HTTPS origin; backend/renderer tokens must not be exposed in reverse-proxy URLs.
 
-| Directory | Contents |
-|-----------|----------|
-| [docker/](docker/README.md) | Image build, Compose, and the container entrypoint |
-| [helm/octop/](helm/octop/README.md) | Helm chart: pgvector, multiple Octop replicas, one Ingress |
-
-`fnos/docker/` stays where it is. That tree is the FnOS package, not this image build.
+The library source and wheel-set delivery model are documented in [product setup](../docs/product-applications.md). Old cluster/mobile Compose and FnOS native/full-server launchers are retired. The current chart runs one gateway; actual multi-replica recovery is not validated.

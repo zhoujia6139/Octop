@@ -1,169 +1,54 @@
 # Architecture
 
-Octop is a self-hosted AI assistant platform for multiple users and agents,
-delivered as a single Python process.
-It glues three reusable libraries — `octop-harness` (LangGraph-based
-chat runtime), `octop-gateway` (IM channel pipeline), and a React
-+ TypeScript dashboard — into one wheel that ships with a CLI, an
-HTTP/WebSocket API, and a web UI.
+Octop has two independent Python applications and an Electron desktop shell. One wheel contains the application code and a shared React UI; installation extras choose the dependencies. The server is a control plane and model gateway. Agent execution runs on the user's computer.
 
-> Looking for the contributor-facing navigation guide (module boundaries,
-> change workflow, hard bans)? See [AGENTS.md](../AGENTS.md) at the repo
-> root. This document is the **human-readable** overview; AGENTS.md is
-> the **agent-facing** handbook.
-
-## 1. Layering
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Surface          │  Dashboard (React)   CLI (click)   HTTP API │
-├──────────────────────────────────────────────────────────────────┤
-│  API layer        │  FastAPI routers       WS / SSE / JSON        │
-├──────────────────────────────────────────────────────────────────┤
-│  Domain layer     │  AgentManager   Gateway   GlobalProcessor     │
-│                   │  CronManager    UserManager   SharedServices │
-├──────────────────────────────────────────────────────────────────┤
-│  Reusable libs    │  octop-harness   octop-gateway            │
-├──────────────────────────────────────────────────────────────────┤
-│  Storage          │  SQLite or PostgreSQL control plane + file workspaces│
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    UI[Desktop renderer] -->|restricted IPC and API proxy| Main[Electron main]
+    Main -->|loopback token| Local[Local application / Harness / Memory]
+    Main -->|password + MFA / device refresh| Cloud[Cloud application]
+    Local -->|device identity| Cloud
+    Cloud --> Provider[Model supplier]
+    Cloud --> DB[SQLite or PostgreSQL]
+    Local --> Files[Account-isolated local data]
 ```
 
-The whole stack is one process. There is no separate worker, no
-external queue, no required external services beyond whatever LLM
-provider the user configures.
+## Application boundaries
 
-## 2. Process model
+| Application | Composition | Owns | Does not start |
+| --- | --- | --- | --- |
+| Cloud | `api/applications/cloud.py`, `infra/applications/cloud.py` | Accounts, MFA, devices, resource publication/assignment, model authentication/budgets/settlement, backup storage | Harness, Memory runtime, Browser, Gateway, cron, tools |
+| Local | `api/applications/local.py`, `infra/applications/local_accounts.py`, `infra/applications/local.py` | Account selection, resource installation, Harness turns and approvals, local files/memory, durable backup outbox and explicit restore | Legacy server, IM, cron, Bridge, cross-user Agent collaboration |
+| Electron | `desktop/src/main/`, `preload/` | Sidecar process, OS credential store, trusted API/WS proxy, updates, suspend/quit ordering | Cloud model supplier credentials |
 
-`OctopServer.start()` wires the runtime tree in dependency order. The
-composition root lives in `src/octop/infra/server.py`; FastAPI/uvicorn
-is attached from `src/octop/launch.py` (the only module that may import
-both `infra/server` and `api/app`).
+`launch.py` selects one factory. `octop run` defaults to cloud; `octop run --role desktop` / `octop-local` select the loopback application. Both use one uvicorn worker. Neither assembles `OctopServer`, `AgentManager`, or the legacy `api/app.py`. There is no cloud fallback executor.
 
-```
-OctopServer.start()
- ├─ PathLayout.from_env()            (root + DB + secrets dirs)
- ├─ load_config(config.json)        (env overrides on top)
- ├─ open_database()                  (SQLite WAL or PostgreSQL via PostgresPool)
- ├─ run_migrations()                 (infra/db/migrations/*.sql, versioned)
- ├─ SharedServices (repos + factories)
- ├─ WizardTokenStore                 (5-min TTL setup tokens)
- ├─ ExpertCatalog  / SubagentCatalog (bundled MD libraries)
- ├─ PluginManager.seed_bundled() then load_installed()  (~/.octop/plugins/*; bundled default off)
- ├─ AgentManager (global registry — one per process)
- │    └─ for each agent row: builds HarnessAgentRuntime on demand
- │       ├─ HarnessAgent (LangGraph)
- │       ├─ GlobalProcessor (slash dispatch + chunk projection)
- │       └─ BackendWorkspace (filesystem or remote storage adapter)
- ├─ Gateway                         (IM channels + WS hub + cron trigger source)
- │    ├─ ChannelManager (one per agent that has a channel row)
- │    └─ WebSocketHub  (dashboard + CLI channel)
- ├─ CronManager (process-wide APScheduler)
- └─ UserManager (auth + per-user lookups)
-```
+The desktop renderer loads `octop://app/` in a sandbox with context isolation. Electron main alone holds the local API token and long-lived device refresh credential. Only main can change the trusted cloud origin, select a cloud account or prepare shutdown. HTTP and WebSocket proxies block those control paths, including encoded spellings. Development UI uses the same proxy boundary. Cloud management browser sessions remain in memory.
 
-The `AppRuntime` dataclass holds the four live singletons that
-`api/routers/*` reach via `server.app_runtime.<thing>`.
+## Identity and resources
 
-### Per-user isolation
+Password plus TOTP MFA (with recovery codes) authenticates an account. Each user has one current device binding and a generation fence. Replacement or revocation invalidates old device writes and model calls. Account, device and local API credentials have different audiences and cannot substitute for each other.
 
-Every request is authenticated via JWT and resolved to a `User` row.
-Agent ownership is enforced at the **row** level (`agents.user_id`
-matched against the caller; admin bypass allowed) — there is no longer
-a separate per-user `AgentManager`. The single global registry
-dispatches to whichever harness runtime matches the row, which keeps
-admin tooling (`/api/admin/*`) and cross-user diagnostics simple.
+Platform Agent/skill definitions, immutable revisions, published revisions, device assignments, installation receipts and runtime instances are distinct. Agents pin skill revisions. A device installs a complete verified tree before switching versions, and only at a turn/approval boundary. Platform edits require a personal copy; personal IDs and skill snapshots remain independent of later platform updates.
 
-The dashboard always talks to Octop over `/api` HTTP/WebSocket; the
-React SPA never imports a Python module and never opens the SQLite
-file directly.
+## Model calls and settlement
 
-## 3. Conversation surfaces
+All model consumption goes through the cloud gateway. The desktop selects a logical model, never a supplier URL or API key. The gateway validates the current device and Agent/thread/turn relationship, reserves the configured upper bound transactionally, records each supplier attempt, then settles authoritative usage. Idempotent retries do not create another supplier call. Ambiguous outcomes retain a reservation for explicit reconciliation. Currency and rates are configured by the administrator; no production price is assumed.
 
-Three surfaces share the same agent runtime:
+## Storage and synchronization
 
-| Surface | Wire | Session key (default) | Notes |
-|---------|------|-----------------------|-------|
-| Web UI | WebSocket `/api/agents/{aid}/chat/ws` | `<aid>:dashboard:<user_id>:dm` | Dashboard turn endpoint |
-| CLI | Embedded `OctopServer` (REPL) or WebSocket | `<aid>:cli:<user_id>:dm` | `octop chats send` / `chats repl` |
-| IM channel | gateway `ChannelManager` | `<aid>:<channel_kind>:<platform_session>:<dm\|group>` | See `infra/gateway/process/message_keys.py` |
-| Cron job | APScheduler trigger → `Gateway.push_text_from_session` | row's `session_key` (defaults to `dashboard_key` of the owner) | `task_type=text\|agent` chooses direct-push vs run-AI-then-push |
+Cloud and local migrations are independent under `infra/db/migrations/cloud/` and `local/`, with separate watermarks. Cloud state, encrypted secrets and synchronized content chunks use SQLite or PostgreSQL. No pgvector service is required by the cloud application. Local execution uses SQLite and account-isolated directories selected only after cloud identity verification. See [identity](cloud-identity.md), [model gateway](platform-models.md), [resources](platform-resources.md) and [sync](platform-sync.md) for exact contracts.
 
-`thread_id` itself encodes no origin; origin is a column on
-`chat_sessions` / `threads`. Thread reuse / archival is a row update —
-see `infra/gateway/threads.py` for the full state machine.
+Synchronization uploads a versioned projection of messages, tool results, supported files and logical memory. Only `inbound/` and `artifacts/` file contents are exported; external files, hidden/system paths, credentials, browser profiles, execution checkpoints, temporary files and caches are excluded. File chunks are uploaded and verified before publishing references. Durable outbox state and cloud acknowledgement determine success. Offline edits survive restart; restore is explicit and skips agents with pending local changes. No tool or pending approval is replayed during restore.
 
-> **Streaming chat is now WebSocket.** Legacy SSE on
-> `POST /api/agents/{aid}/chat/stream` has been replaced by a
-> bidirectional WS endpoint that lets the dashboard also send
-> slash/`/compact` mid-turn. `POST /api/agents/{aid}/chat/hitl/resume`
-> is the one route that still uses SSE — it streams the resumed turn
-> back to the client.
+Suspend and quit close request admission, cancel/drain turns, persist interruption, drain accepted memory work and attempt a bounded final sync. Wake verifies the device before reopening admission. Forced exit recovers durable history as interrupted; it does not resume execution. Tray hiding leaves the application running.
 
-## 4. Storage
+## Source and distribution
 
-The **control plane** (users, agents, providers, channels, cron,
-sessions, audit, JWT secret) lives in either:
+The maintained library sources live in `vendor/octop-harness` and `vendor/octop-memory`; `VENDOR.json` records upstream bases. `tool.uv.sources` and `uv.lock` select these paths. Runtime algorithms remain in their owning library, not copied into Octop application modules. Browser remains a separately versioned dependency. Gateway is used only by retained legacy regression modules.
 
-* SQLite — default file under `~/.octop/` (legacy `octop.db` or
-  `config.json` → `database.sqlite_path`), or
-* PostgreSQL — `config.json` / `OCTOP_DATABASE_*` / Setup wizard database step.
+`uv sync --frozen` installs local source dependencies. `make build` builds the UI, Octop wheel/sdist and local library wheels with role-specific locked requirements in `dist/product/`. Install this wheel set together; a bare registry install is not the distribution contract for the locally maintained versions. Portable builds install those same library wheels, not editable source paths. The cloud image installs only `cloud`, copying library metadata solely so uv can read the frozen source records.
 
-Migrations: `src/octop/infra/db/migrations/NNN_*.sql` (SQLite) and
-`NNN_*.pg.sql` (PostgreSQL). Connection PRAGMAs live on the SQLite pool;
-PostgreSQL extensions (e.g. `vector`) are docker/ops init, not app
-migrations. Agent memory DDL is owned by octop-memory. See
-[ADR 002](./adr/002-database-backends.md).
+Current deployment examples run one cloud gateway. The Helm chart prevents overlapping gateways during upgrades; cloud interruption is handled by desktop pending state. Multi-replica gateway recovery has not been validated. Legacy FnOS native/full-server packages and full/lite execution images are retired. Use the cloud container and a desktop installer.
 
-The wheel ships the built dashboard SPA, so the entire stack is one
-`pip install`.
-
-Per-agent workspace files (Markdown, skills, expert templates) are
-read and written through the agent's `BackendWorkspace`
-(`octop.infra.backend` → `octop_harness.backends`). The default
-backend is a `filesystem` adapter rooted at
-`~/.octop/agents/<agent_id>/`; remote backends (S3, COS) are mounted
-on top of the same root_dir and the Octop service never reads
-content files via `Path.write_text` / `read_text` (see
-[agent-backend-file-io.md](./agent-backend-file-io.md) for the full
-rules). Checkpointing, langgraph state, and the
-`sessions/*.jsonl` fallbacks stay on the local workspace dir because
-they are harness-managed.
-
-## 5. Internationalization (i18n)
-
-Server-owned strings (slash replies, IM status, API error messages,
-tool display names, CLI output) come from the bundles in
-`src/octop/i18n/{en,zh}.json` and helpers under
-`src/octop/i18n/domains/`. Locale resolution lives in
-`infra/utils/locale.py`: stored user preference → `Accept-Language`
-header → channel-type hint. The dashboard mirrors the codes under
-`dashboard/src/locales/{en,zh}.json → apiErrors.*` and may hydrate
-tool labels from `GET /api/i18n/tools`.
-
-## 6. Multi-agent interactions (harness teams)
-
-`@Agent` and `ask_agent` flow through the harness `TeamManager`
-(InboxManager + GlobalProcessor) — see
-[agent-interop-mailbox.md](./agent-interop-mailbox.md) for the queue
-contract and [agent-call-agent.md](./agent-call-agent.md) /
-[agent-delegation.md](./agent-delegation.md) for the two user-side
-entry points. Octop's `GlobalProcessor` implements the
-`TeamProcessor` protocol so replies land back in the parent thread
-checkpoint and are pushed to the dashboard / IM channel by
-`on_reply`.
-
-## See also
-
-- [AGENTS.md](../AGENTS.md) — module boundaries, hard bans, change workflow
-- [Architecture Decision Records](./adr/) — single-process, no queue (ADR 001)
-- [Configuration](configuration.md) — `~/.octop/` layout + env vars
-- [API reference](api.md) — every route, body, and error
-- [CLI reference](cli.md) — every subcommand
-- [Personas](personas.md) — MBTI templates and the mbti_profiles data module
-- [ACP integration](acp.md) — in/out ACP server and runner tool
-- [Agent interop](agent-interop-mailbox.md),
-  [agent call](agent-call-agent.md),
-  [agent delegation](agent-delegation.md)
-- [Agent backend file I/O](agent-backend-file-io.md) — content file rules
-- [Deployment](../deploy/README.md) — Docker image/Compose and Kubernetes manifests
+See [ADR 004](adr/004-local-agent-cloud-control.md), [product setup](product-applications.md), [CLI](cli.md), [API](api.md) and [AGENTS.md](../AGENTS.md). CI defines native Linux/macOS/Windows product and package checks; configured jobs are not evidence of having run them on this workstation.

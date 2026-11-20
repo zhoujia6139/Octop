@@ -46,16 +46,8 @@ app.kubernetes.io/component: postgres
 
 {{- define "octop.database.host" -}}
 {{- if .Values.postgresql.enabled -}}
-{{- printf "%s-pgvector" (include "octop.fullname" .) -}}
+{{- printf "%s-postgres" (include "octop.fullname" .) -}}
 {{- else -}}
 {{- required "database.host is required when postgresql.enabled is false" .Values.database.host -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "octop.corsOrigins" -}}
-{{- if .Values.config.corsOrigins -}}
-{{- .Values.config.corsOrigins -}}
-{{- else -}}
-{{- printf "https://%s" .Values.ingress.host -}}
 {{- end -}}
 {{- end -}}
