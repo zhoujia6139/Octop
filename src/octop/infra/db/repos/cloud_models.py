@@ -23,6 +23,12 @@ class ModelTransaction:
             is not None
         )
 
+    def user_role(self, user_id: int) -> str | None:
+        row = self.conn.execute(
+            "SELECT role FROM cloud_users WHERE user_id=?", (user_id,)
+        ).fetchone()
+        return str(row[0]) if row else None
+
     def provider(self, provider_id: str) -> dict[str, Any] | None:
         row = self.conn.execute(
             "SELECT * FROM cloud_model_providers WHERE provider_id=?", (provider_id,)

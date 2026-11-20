@@ -171,7 +171,7 @@ uv run --no-dev --extra local-runtime octop-local --home /path/to/local --port 8
 - 两端 `GET /api/health` 返回协议版本、role、就绪状态和 schema_version；云端 P1 仅提供健康和可选 API 文档，没有认证或资源业务路由。
 - 本地提供实例列表/创建、线程创建，以及 `/api/agents/{agent_id}/threads/{thread_id}/ws`。WS 接受 start（text）、resume（approve/reject decisions）、cancel；事件有稳定 turn_id、thread_id 和递增 sequence。
 - WS 握手使用 Authorization Bearer 请求头，不接受 URL 查询参数中的凭证，避免本机 token 出现在访问日志中；桌面 relay 的产品接入在 P6 完成。
-- 本地工具流直接由 Harness 提供，写文件、编辑文件和 Shell 执行需审批。取消未批准的写入后，新 turn 不应执行之前的操作；重启将未完成 turn 标记为 interrupted，不自动重放。
+- 本地工具流直接由 Harness 提供，用户发起聊天后，写文件、编辑文件和 Shell 执行默认直接执行，不逐次请求确认。保留显式审批的协议与生命周期处理：取消未批准的写入后，新 turn 不应执行之前的操作；重启将未完成 turn 标记为 interrupted，不自动重放。
 - 平台模型适配只允许由可信 Python 装配注入。P1 用真实 Harness 和内存模型 stub 验收；生产默认未连接 P3 网关时返回 PLATFORM_MODEL_UNAVAILABLE，HTTP/config.json 不支持供应商地址、Key 或测试模式。
 - P6 已移除 `legacy-runtime` extra；旧模块回归依赖仅存在于 `legacy-tests` 开发 dependency group，不是第三种后端。便携包新依赖导出使用 local-runtime，不包含旧服务器依赖。
 

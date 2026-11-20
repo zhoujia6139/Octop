@@ -136,13 +136,18 @@ class ModelLedger:
             if existing and body.limit_nanos < existing["spent_nanos"] + existing["reserved_nanos"]:
                 raise fail(ErrorCode.MODEL_REQUEST_CONFLICT)
             tx.put_budget(user_id, body.currency, body.limit_nanos)
-            return BudgetView.model_validate(tx.budget(user_id, body.currency))
+            saved = tx.budget(user_id, body.currency)
+            assert saved is not None
+            return BudgetView.model_validate(
+                {**saved, "unlimited": tx.user_role(user_id) == "admin"}
+            )
 
     def budgets(self, token: str, user_id: int | None = None) -> list[BudgetView]:
         with self._read(token, user_id) as (tx, current):
+            target = user_id if user_id is not None else current
+            unlimited = tx.user_role(target) == "admin"
             return [
-                BudgetView.model_validate(r)
-                for r in tx.budgets(user_id if user_id is not None else current)
+                BudgetView.model_validate({**r, "unlimited": unlimited}) for r in tx.budgets(target)
             ]
 
     def register_context(self, token: str, body: ModelContext) -> None:
@@ -286,7 +291,13 @@ class ModelLedger:
     @staticmethod
     def _reserve(tx: ModelTransaction, user_id: int, currency: str, amount: int) -> None:
         budget = tx.budget(user_id, currency)
-        if (
+        if tx.user_role(user_id) == "admin":
+            # The caller holds the live user lock. Keep a real accounting row
+            # even without a configured budget, including holds pending review.
+            # A later demotion restores enforcement of the stored limit.
+            if budget is None:
+                tx.put_budget(user_id, currency, 0)
+        elif (
             not budget
             or budget["limit_nanos"] - budget["spent_nanos"] - budget["reserved_nanos"] < amount
         ):

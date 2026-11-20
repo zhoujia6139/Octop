@@ -128,7 +128,7 @@ class LocalApplication:
             web_search_tools=False,
             acp_runners={},
             todos_enabled=False,
-            interrupt_on={"write_file": True, "edit_file": True, "execute": True},
+            interrupt_on={},
             default_timezone=self.settings.default_timezone,
         )
         initialized = asyncio.get_running_loop().run_in_executor(

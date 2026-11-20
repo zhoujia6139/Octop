@@ -1,9 +1,13 @@
 .product-root {
-  min-height: 100vh;
-  padding-top: var(--octop-caption-row, 0px);
+  /* The shell already reserves its caption row outside #root. Bound the
+     product to the remaining height so its content can scroll within it. */
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
 }
 .product-root > .ant-layout {
-  min-height: calc(100vh - var(--octop-caption-row, 0px));
+  height: 100%;
+  min-height: 0;
 }
 .product-header {
   display: flex;
@@ -11,6 +15,7 @@
   justify-content: space-between;
   height: auto;
   min-height: 64px;
+  flex-shrink: 0;
   gap: 20px;
   padding: 12px 24px;
   background: var(--color-bg-container, transparent);
@@ -21,6 +26,9 @@
 .product-content {
   padding: 24px;
   min-width: 0;
+  min-height: 0;
+  height: auto;
+  overflow: auto;
 }
 .product-login {
   width: min(440px, calc(100% - 32px));
@@ -46,19 +54,50 @@
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+.product-chat-workspace {
+  height: 100%;
+  min-height: 0;
+}
+.product-chat-workspace > :not(.product-chat) {
+  flex-shrink: 0;
+}
+.product-chat > .ant-card,
+.product-chat-main {
+  min-height: 0;
+  overflow: auto;
+}
+.product-chat-main > :not(.product-messages) {
+  flex-shrink: 0;
 }
 .product-messages {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 200px;
-  max-height: 60vh;
+  flex: 1;
+  min-height: 80px;
   overflow: auto;
   padding: 8px;
 }
 .product-message {
+  flex-shrink: 0;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+.product-tool-details > summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.product-tool-group {
+  flex-shrink: 0;
+  padding: 12px;
+  border: 1px solid var(--fn-border-primary);
+  border-radius: 8px;
+}
+.product-tool-details[open] > summary {
+  margin-bottom: 12px;
 }
 .product-message pre {
   overflow: auto;
@@ -89,6 +128,13 @@
 @media (max-width: 800px) {
   .product-chat {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 80px) minmax(0, 1fr);
+  }
+  .product-chat-main {
+    gap: 8px;
+  }
+  .product-messages {
+    min-height: 0;
   }
   .product-content {
     padding: 12px;

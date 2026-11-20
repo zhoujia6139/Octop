@@ -55,6 +55,118 @@ export function messageText(data: MessageData): string {
         .join("\n");
 }
 
+type MessageGroup =
+  | { kind: "message"; message: Message }
+  | { kind: "tools"; messages: Message[] };
+
+export function groupMessages(messages: Message[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  for (const row of messages) {
+    const tool =
+      row.data.role === "tool" ||
+      (row.data.role === "assistant" && row.data.tool_calls.length > 0);
+    if (!tool) {
+      groups.push({ kind: "message", message: row });
+      continue;
+    }
+    const previous = groups[groups.length - 1];
+    if (
+      previous?.kind === "tools" &&
+      previous.messages[0].data.turn_id === row.data.turn_id &&
+      previous.messages[0].data.thread_id === row.data.thread_id
+    ) {
+      previous.messages.push(row);
+    } else {
+      groups.push({ kind: "tools", messages: [row] });
+    }
+  }
+  return groups;
+}
+
+function ChatMessage({
+  row,
+  api,
+  identity,
+  onError,
+}: {
+  row: Message;
+  api: ProductApi;
+  identity: Identity;
+  onError(error: string): void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Card
+      key={row.item_id}
+      size="small"
+      className="product-message"
+      title={
+        <Space>
+          <span>{t(`product.roles.${row.data.role}`)}</span>
+          <Typography.Text type="secondary">
+            {date(row.data.created_at, identity)}
+          </Typography.Text>
+        </Space>
+      }
+      extra={
+        <Button
+          type="text"
+          onClick={() => {
+            void copyText(messageText(row.data));
+          }}
+        >
+          {t("product.copy")}
+        </Button>
+      }
+    >
+      {row.data.role === "tool" ? (
+        <pre>{messageText(row.data)}</pre>
+      ) : (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            img: ({ alt }) => <span>{alt}</span>,
+            a: ({ href, children }) =>
+              /^https?:\/\//i.test(href ?? "") ? (
+                <a href={href} rel="noreferrer" target="_blank">
+                  {children}
+                </a>
+              ) : (
+                <span>{children}</span>
+              ),
+          }}
+        >
+          {messageText(row.data)}
+        </ReactMarkdown>
+      )}
+      {row.data.tool_calls.map((call, index) => (
+        <div key={index}>
+          <Typography.Text strong>
+            {t("product.toolCall", {
+              name: String(call.name ?? ""),
+            })}
+          </Typography.Text>
+          <pre>{JSON.stringify(call.args, null, 2)}</pre>
+        </div>
+      ))}
+      <Space wrap>
+        {row.data.attachments.map((attachment) => (
+          <Button
+            key={attachment.file_id}
+            onClick={() => {
+              void api
+                .downloadAttachment(row.item_id, attachment.file_id)
+                .catch((err) => onError(errorText(err)));
+            }}
+          >
+            {t("product.downloadAttachment")}
+          </Button>
+        ))}
+      </Space>
+    </Card>
+  );
+}
+
 function Chat({
   api,
   identity,
@@ -92,6 +204,7 @@ function Chat({
     () => orderedMessages(records, thread),
     [records, thread],
   );
+  const groups = useMemo(() => groupMessages(messages), [messages]);
   const threads = records.filter(
     (row): row is Thread => row.data?.kind === "thread",
   );
@@ -223,7 +336,7 @@ function Chat({
           )}
         />
       </Card>
-      <div className="product-stack">
+      <div className="product-stack product-chat-main">
         {error && (
           <Alert
             type="error"
@@ -255,76 +368,43 @@ function Chat({
               <Alert type="warning" message={t("product.interruptedHelp")} />
             )}
             <div className="product-messages">
-              {messages.map((row) => (
-                <Card
-                  key={row.item_id}
-                  size="small"
-                  className="product-message"
-                  title={
-                    <Space>
-                      <span>{t(`product.roles.${row.data.role}`)}</span>
-                      <Typography.Text type="secondary">
-                        {date(row.data.created_at, identity)}
-                      </Typography.Text>
-                    </Space>
-                  }
-                  extra={
-                    <Button
-                      type="text"
-                      onClick={() => {
-                        void copyText(messageText(row.data));
-                      }}
-                    >
-                      {t("product.copy")}
-                    </Button>
-                  }
-                >
-                  {row.data.role === "tool" ? (
-                    <pre>{messageText(row.data)}</pre>
-                  ) : (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        img: ({ alt }) => <span>{alt}</span>,
-                        a: ({ href, children }) =>
-                          /^https?:\/\//i.test(href ?? "") ? (
-                            <a href={href} rel="noreferrer" target="_blank">
-                              {children}
-                            </a>
-                          ) : (
-                            <span>{children}</span>
-                          ),
-                      }}
-                    >
-                      {messageText(row.data)}
-                    </ReactMarkdown>
-                  )}
-                  {row.data.tool_calls.map((call, index) => (
-                    <details key={index}>
-                      <summary>
-                        {t("product.toolCall", {
-                          name: String(call.name ?? ""),
-                        })}
-                      </summary>
-                      <pre>{JSON.stringify(call.args, null, 2)}</pre>
-                    </details>
-                  ))}
-                  <Space wrap>
-                    {row.data.attachments.map((attachment) => (
-                      <Button
-                        key={attachment.file_id}
-                        onClick={() => {
-                          void api
-                            .downloadAttachment(row.item_id, attachment.file_id)
-                            .catch((err) => setError(errorText(err)));
-                        }}
-                      >
-                        {t("product.downloadAttachment")}
-                      </Button>
-                    ))}
-                  </Space>
-                </Card>
-              ))}
+              {groups.map((group) =>
+                group.kind === "message" ? (
+                  <ChatMessage
+                    key={group.message.item_id}
+                    row={group.message}
+                    api={api}
+                    identity={identity}
+                    onError={setError}
+                  />
+                ) : (
+                  <details
+                    className="product-tool-details product-tool-group"
+                    key={group.messages[0].item_id}
+                  >
+                    <summary>
+                      {t("product.toolActivity", {
+                        count:
+                          group.messages.reduce<number>(
+                            (total, row) => total + row.data.tool_calls.length,
+                            0,
+                          ) || group.messages.length,
+                      })}
+                    </summary>
+                    <div className="product-stack">
+                      {group.messages.map((row) => (
+                        <ChatMessage
+                          key={row.item_id}
+                          row={row}
+                          api={api}
+                          identity={identity}
+                          onError={setError}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                ),
+              )}
             </div>
             {status === "awaiting_approval" && (
               <Card title={t("product.approvalRequired")}>
@@ -510,7 +590,11 @@ export function DesktopWorkspace({
   };
   const local = agents.data.find((row) => row.agent_id === agent);
   return (
-    <div className="product-stack">
+    <div
+      className={`product-stack${
+        section === "chat" ? " product-chat-workspace" : ""
+      }`}
+    >
       <Typography.Title level={3}>
         {t(`product.nav.${section}`)}
       </Typography.Title>

@@ -838,10 +838,17 @@ export function Usage({
   );
   const [budget, setBudget] = useState(false);
   const [reconcile, setReconcile] = useState<string | null>(null);
+  const selectedUser = admin
+    ? users.data.find((user) => user.user_id === selected)
+    : identity.user;
+  const unlimited = selectedUser?.role === "admin";
   return (
     <div className="product-stack">
       <Typography.Title level={3}>{t("product.nav.usage")}</Typography.Title>
       <Alert type="info" message={t("product.usageHelp")} />
+      {unlimited && (
+        <Alert type="info" message={t("product.adminUnlimitedUsage")} />
+      )}
       {state.error && <Alert type="error" message={state.error} />}
       <Space>
         {admin && (
@@ -862,7 +869,7 @@ export function Usage({
         >
           {t("product.refresh")}
         </Button>
-        {admin && (
+        {admin && selectedUser?.role === "user" && (
           <Button onClick={() => setBudget(true)}>
             {t("product.setBudget")}
           </Button>
@@ -876,7 +883,10 @@ export function Usage({
           {
             title: t("product.limit"),
             key: "limit",
-            render: (_, row) => money(row.limit_nanos, row.currency),
+            render: (_, row) =>
+              row.unlimited
+                ? t("product.unlimited")
+                : money(row.limit_nanos, row.currency),
           },
           {
             title: t("product.spent"),

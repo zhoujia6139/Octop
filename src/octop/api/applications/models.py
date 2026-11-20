@@ -102,6 +102,7 @@ async def grant(
     "/model-admin/users/{user_id}/budget",
     response_model=BudgetView,
     summary="Set an absolute spending limit without changing settled or held amounts",
+    description="The stored limit is enforced for regular users. Current admin roles are exempt; their usage and reservations remain recorded.",
 )
 async def budget(user_id: int, body: BudgetInput, gateway: Gateway, token: Token) -> BudgetView:
     return await offload(gateway.ledger.put_budget, token, user_id, body)
@@ -112,6 +113,7 @@ async def budget(user_id: int, body: BudgetInput, gateway: Gateway, token: Token
     response_model=list[BudgetView],
     tags=["usage"],
     summary="Get owned budgets; administrators may select a user",
+    description="unlimited reflects the current cloud role. For administrators, limit_nanos is stored configuration rather than an enforced cap. Accounting rows are created on first consumption.",
 )
 async def budgets(gateway: Gateway, token: Token, user_id: int | None = None) -> list[BudgetView]:
     return await offload(gateway.ledger.budgets, token, user_id)

@@ -33,6 +33,32 @@ class LocalModel(BaseChatModel):
     def _reply(self, messages: list[BaseMessage]) -> AIMessage:
         if isinstance(messages[-1], ToolMessage):
             return AIMessage(content=f"Tool completed: {messages[-1].content}")
+        if str(messages[-1].content).startswith("edit "):
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "edit-1",
+                        "name": "edit_file",
+                        "args": {
+                            "file_path": "result.txt",
+                            "old_string": "before-edit",
+                            "new_string": "after-edit",
+                        },
+                    }
+                ],
+            )
+        if str(messages[-1].content).startswith("execute "):
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "execute-1",
+                        "name": "execute",
+                        "args": {"command": "echo auto-executed"},
+                    }
+                ],
+            )
         if "write" in str(messages[-1].content):
             return AIMessage(
                 content="",
@@ -82,3 +108,11 @@ class LocalModelFactory(ChatModelFactory):
 
     def get_chat_model(self, model_ref: str, *, max_retries: int | None = None) -> BaseChatModel:
         return self.model
+
+
+def approval_agent(config, **kwargs):
+    """Explicitly opt lifecycle/approval regression tests into a tool gate."""
+    from octop_harness.agent import HarnessAgent
+
+    config.interrupt_on = {"write_file": True, "edit_file": True, "execute": True}
+    return HarnessAgent(config, **kwargs)

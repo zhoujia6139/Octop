@@ -17,6 +17,9 @@ from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.ulid import new_ulid
 from tests.integration import test_cloud_identity as identity
 from tests.integration import test_platform_models as model_tests
+from tests.integration.test_independent_applications import (
+    tool_approval as tool_approval,
+)
 from tests.support.local_models import LocalModelFactory
 
 cloud = identity.cloud
@@ -406,7 +409,9 @@ async def test_install_failure_keeps_previous_complete_tree_and_retries(
 
 
 @pytest.mark.parametrize("pending", ["running", "approval"])
-async def test_version_switch_waits_for_turn_and_approval_boundary(resources, tmp_path, pending):
+async def test_version_switch_waits_for_turn_and_approval_boundary(
+    resources, tmp_path, pending, tool_approval
+):
     app, client, admin, grant, token, user_id, skill, agent_id = resources
     await assign(client, admin, user_id, agent_id)
     async with desktop(tmp_path, app, grant) as (_, local, runtime, _, factory):

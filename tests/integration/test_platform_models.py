@@ -418,7 +418,7 @@ def definition(protocol="chat_completions", name="test", *, fallback=False):
 
 
 @pytest.fixture
-async def platform(cloud):
+async def platform(cloud, request):
     app, client, account = cloud
     gateway = app.state.cloud.models
     await gateway.client.aclose()
@@ -437,7 +437,17 @@ async def platform(cloud):
         )
         assert response.status_code == 200, response.text
         assert "supplier-private-key" not in response.text
-    grant = await identity_tests.bind(client, account)
+    role = getattr(request, "param", "admin")
+    consumer = account
+    if role == "user":
+        created = await client.post(
+            "/api/users",
+            headers=headers(account),
+            json={"username": "consumer", "password": identity_tests.PASSWORD, "role": "user"},
+        )
+        assert created.status_code == 201, created.text
+        consumer = (await identity_tests.login(client, "consumer"))["session"]["access_token"]
+    grant = await identity_tests.bind(client, consumer)
     device = grant["session"]["access_token"]
     user_id = grant["session"]["identity"]["user"]["user_id"]
 
@@ -451,15 +461,16 @@ async def platform(cloud):
             json={"allowed": True},
         )
         assert response.status_code == 204, response.text
-        response = await client.put(
-            f"/api/model-admin/users/{user_id}/budget",
-            headers=headers(account),
-            json={"currency": "USD", "limit_nanos": budget},
-        )
-        assert response.status_code == 200, response.text
+        if budget is not None:
+            response = await client.put(
+                f"/api/model-admin/users/{user_id}/budget",
+                headers=headers(account),
+                json={"currency": "USD", "limit_nanos": budget},
+            )
+            assert response.status_code == 200, response.text
         return body
 
-    await configure()
+    await configure(budget=None if role == "admin" else 1000000)
     context = {"agent_id": new_ulid(), "thread_id": new_ulid(), "turn_id": new_ulid()}
     # P4 consumption contexts require a formal personal or assigned Agent.
     created = await client.put(
@@ -486,6 +497,89 @@ async def platform(cloud):
         }
 
     return app, client, account, device, supplier, configure, request, grant
+
+
+@pytest.mark.parametrize("budget", [None, 0])
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_admin_ignores_budget_limits_and_keeps_exact_idempotent_accounting(
+    platform, budget, fallback
+):
+    app, client, account, device, supplier, configure, request, grant = platform
+    await configure(definition(fallback=fallback), budget=budget)
+    if budget is None:
+        assert (await client.get("/api/usage/budgets", headers=headers(device))).json() == []
+    body = request()
+    for expected_status in (200, 202):
+        response = await client.post("/api/models/requests", headers=headers(device), json=body)
+        assert response.status_code == expected_status, response.text
+    status = (
+        await client.get("/api/models/requests/" + body["request_id"], headers=headers(device))
+    ).json()
+    assert status["state"] == "settled"
+    assert [a["state"] for a in status["attempts"]] == (
+        ["released", "settled"] if fallback else ["settled"]
+    )
+    assert len(supplier.calls) == (2 if fallback else 1)
+    assert (
+        await client.post("/api/models/requests", headers=headers(device), json=request())
+    ).status_code == 200
+    balance = (await client.get("/api/usage/budgets", headers=headers(device))).json()[0]
+    assert balance == {
+        "user_id": grant["session"]["identity"]["user"]["user_id"],
+        "currency": "USD",
+        "limit_nanos": 0,
+        "spent_nanos": 116,
+        "reserved_nanos": 0,
+        "unlimited": True,
+    }
+    summary = (await client.get("/api/usage/summary", headers=headers(device))).json()
+    assert summary[0]["cost_nanos"] == 116
+    assert summary[0]["settled_attempts"] == 2
+
+
+@pytest.mark.parametrize("platform", ["user"], indirect=True)
+async def test_budget_exemption_follows_current_role_and_preserves_held_amounts(platform):
+    app, client, account, device, supplier, configure, request, grant = platform
+    await configure(budget=0)
+    user_id = grant["session"]["identity"]["user"]["user_id"]
+    rejected = await client.post("/api/models/requests", headers=headers(device), json=request())
+    assert rejected.json()["error"]["code"] == "TOKEN_QUOTA_EXCEEDED"
+    assert not supplier.calls
+    response = await client.put(
+        f"/api/users/{user_id}",
+        headers=headers(account),
+        json={"enabled": True, "role": "admin"},
+    )
+    assert response.status_code == 200, response.text
+    consumer = (await identity_tests.login(client, "consumer"))["session"]["access_token"]
+    device = (await identity_tests.bind(client, consumer))["session"]["access_token"]
+    ledger = app.state.cloud.models.ledger
+    attempts = await asyncio.gather(
+        offload(ledger.reserve, device, ModelRequest.model_validate(request())),
+        offload(ledger.reserve, device, ModelRequest.model_validate(request())),
+    )
+    balance = (await client.get("/api/usage/budgets", headers=headers(device))).json()[0]
+    assert balance["unlimited"] is True
+    assert balance["reserved_nanos"] == 9600
+    response = await client.put(
+        f"/api/users/{user_id}",
+        headers=headers(account),
+        json={"enabled": True, "role": "user"},
+    )
+    assert response.status_code == 200, response.text
+    consumer = (await identity_tests.login(client, "consumer"))["session"]["access_token"]
+    device = (await identity_tests.bind(client, consumer))["session"]["access_token"]
+    rejected = await client.post("/api/models/requests", headers=headers(device), json=request())
+    assert rejected.json()["error"]["code"] == "TOKEN_QUOTA_EXCEEDED"
+    balance = (await client.get("/api/usage/budgets", headers=headers(device))).json()[0]
+    assert balance["unlimited"] is False
+    assert balance["reserved_nanos"] == 9600
+    for _, attempt_id, _ in attempts:
+        with ledger.repo.transaction() as tx:
+            attempt = tx.attempt(attempt_id)
+        await offload(ledger.finish, attempt["request_id"], attempt_id, usage=None, known_free=True)
+    balance = (await client.get("/api/usage/budgets", headers=headers(device))).json()[0]
+    assert balance["reserved_nanos"] == 0
 
 
 async def test_catalog_credential_storage_authorization_and_immutable_rates(platform):
@@ -638,6 +732,7 @@ async def test_native_protocols_preserve_tools_images_usage_and_settle_once(
     assert summary[0]["settled_attempts"] == 1
 
 
+@pytest.mark.parametrize("platform", ["user"], indirect=True)
 async def test_atomic_concurrent_budget_and_idempotent_inflight_replay(platform):
     app, client, account, device, supplier, configure, request, grant = platform
     await configure(budget=4800)
@@ -1088,6 +1183,7 @@ async def test_desktop_logout_cancels_real_platform_model_stream(platform, tmp_p
 
 
 @pytest.mark.parametrize("protocol", ["chat_completions", "responses", "messages"])
+@pytest.mark.parametrize("platform", ["user"], indirect=True)
 async def test_platform_quota_rejection_reaches_desktop_with_its_error_code(
     platform, tmp_path, protocol
 ):

@@ -133,6 +133,10 @@ class BudgetView(BudgetInput):
     user_id: int
     spent_nanos: int
     reserved_nanos: int
+    unlimited: bool = Field(
+        default=False,
+        description="Current cloud role exempts this user from the stored spending limit; accounting remains active.",
+    )
 
 
 class GrantInput(ModelInput):

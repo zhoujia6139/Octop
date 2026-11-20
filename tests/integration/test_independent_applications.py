@@ -17,7 +17,7 @@ from octop.api.applications.cloud import create_cloud_app
 from octop.api.applications.local import create_local_app
 from octop.application_config import CloudSettings, LocalSettings
 from tests.support.http import ws_connect
-from tests.support.local_models import LocalModelFactory
+from tests.support.local_models import LocalModelFactory, approval_agent
 
 TOKEN = "local-session-test-credential-123456789"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -109,6 +109,11 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
 
 
 @pytest.fixture
+def tool_approval(monkeypatch):
+    monkeypatch.setattr("octop_harness.HarnessAgent", approval_agent)
+
+
+@pytest.fixture
 async def local(tmp_path: Path):
     factory = LocalModelFactory()
     settings = LocalSettings(home=tmp_path, api_token=SecretStr(TOKEN), enable_api_docs=True)
@@ -139,7 +144,34 @@ async def test_local_ws_runs_real_harness_tool_loop(local):
         assert conn.execute("SELECT status FROM local_turns").fetchone()["status"] == "completed"
 
 
-async def test_local_approval_resumes_same_turn_before_file_side_effect(local):
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("write result.txt", b"saved-by-tool"),
+        ("edit result.txt", b"after-edit"),
+        ("execute a command", None),
+    ],
+)
+async def test_local_tools_execute_without_approval_by_default(local, text, expected):
+    app, client, _ = local
+    agent_id, thread_id = await _identity(client)
+    agent = await app.state.local._agent(agent_id)
+    if text.startswith("edit "):
+        await agent.workspace.aupload_bytes("result.txt", b"before-edit")
+    path = f"/api/agents/{agent_id}/threads/{thread_id}/ws"
+    async with ws_connect(app, path, headers=HEADERS) as ws:
+        await ws.send_json({"type": "start", "text": text})
+        events = await _until_status(ws)
+    assert events[-1]["data"]["status"] == "completed"
+    assert not any(event["type"] == "hitl_required" for event in events)
+    assert any(event["type"] == "tool_result" for event in events)
+    if expected is not None:
+        assert await agent.workspace.adownload_bytes("result.txt") == expected
+    else:
+        assert "auto-executed" in str(events)
+
+
+async def test_local_approval_resumes_same_turn_before_file_side_effect(local, tool_approval):
     app, client, _ = local
     agent_id, thread_id = await _identity(client)
     path = f"/api/agents/{agent_id}/threads/{thread_id}/ws"
@@ -171,7 +203,7 @@ async def test_local_ws_cancel_persists_terminal_state(local):
     assert not app.state.local._active
 
 
-async def test_cancelled_approval_does_not_execute_on_a_later_turn(local):
+async def test_cancelled_approval_does_not_execute_on_a_later_turn(local, tool_approval):
     app, client, _ = local
     agent_id, thread_id = await _identity(client)
     path = f"/api/agents/{agent_id}/threads/{thread_id}/ws"

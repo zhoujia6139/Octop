@@ -21,6 +21,9 @@ from tests.integration.test_independent_applications import (
 from tests.integration.test_independent_applications import (
     local as local,
 )
+from tests.integration.test_independent_applications import (
+    tool_approval as tool_approval,
+)
 from tests.support.http import ws_connect
 
 cloud = identity.cloud
@@ -112,7 +115,7 @@ async def test_first_start_origin_configuration_is_local_authenticated_and_durab
     assert json.loads((tmp_path / "config.json").read_text()) == {"cloud_url": "https://cloud.test"}
 
 
-async def test_pending_tool_is_readable_but_shutdown_never_executes_it(local):
+async def test_pending_tool_is_readable_but_shutdown_never_executes_it(local, tool_approval):
     app, client, _ = local
     agent, thread = await _identity(client)
     runtime = app.state.local
@@ -209,7 +212,9 @@ sys.path.insert(0, str(Path.cwd()))
 import uvicorn
 from octop.application_config import LocalSettings
 from octop.api.applications.local import create_local_app
-from tests.support.local_models import LocalModelFactory
+from tests.support.local_models import LocalModelFactory, approval_agent
+import octop_harness
+octop_harness.HarnessAgent = approval_agent
 uvicorn.run(create_local_app(LocalSettings(home=Path(sys.argv[1]),api_token=sys.argv[3]),model_factory=LocalModelFactory()),host='127.0.0.1',port=int(sys.argv[2]),log_level='error')
 """)
     with socket.socket() as probe:

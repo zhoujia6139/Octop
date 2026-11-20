@@ -204,6 +204,7 @@ export interface Budget {
   limit_nanos: string;
   spent_nanos: string;
   reserved_nanos: string;
+  unlimited: boolean;
 }
 export interface Usage {
   uncached_input: number;
