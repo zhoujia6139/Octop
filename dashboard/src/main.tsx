@@ -1,8 +1,3 @@
-// Must be the very first import so the beforeinstallprompt listener is
-// registered synchronously before Chrome fires the event (which can happen
-// before React mounts and useEffect runs).
-import "./pwa-prompt";
-
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import { initI18n } from "./i18n";
@@ -76,11 +71,14 @@ void initI18n()
     console.error("[initI18n]", err);
   });
 
-// Register SW as early as possible so beforeinstallprompt can fire before the
-// user clicks the header install button (deferring to "load" caused a race).
-// DEV clears stale production workers, then registers the notification worker.
-// The desktop shell serves its own packaged Dashboard and must never register a
-// Service Worker that could cache a stale frontend independently of the shell.
-if (typeof window !== "undefined" && !window.octopDesktop) {
-  void import("./sw-register").then(({ registerSW }) => registerSW());
+// The product uses fresh role-specific HTML and durable local data. Retire any
+// worker installed by the former web-chat application, including its API cache.
+if ("serviceWorker" in navigator) {
+  void navigator.serviceWorker
+    .getRegistrations()
+    .then((registrations) =>
+      Promise.all(
+        registrations.map((registration) => registration.unregister()),
+      ),
+    );
 }

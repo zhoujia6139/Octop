@@ -69,7 +69,7 @@
 - `api/applications/cloud.py`、`api/applications/local.py`：各自 FastAPI 工厂、路由和 lifespan；不导入旧 api/app.py 或 api/deps.py。
 - `infra/db/application_migrations.py`：新迁移发现与执行；`infra/db/migrations/cloud/`、`infra/db/migrations/local/` 是独立集合。旧集合和水位不改写。
 - 新 repo 继续位于 `infra/db/repos/`，只负责 SQL，由两端最小容器分别装配；不为方便复用旧 RepoBundle。
-- `launch.py` 选择新工厂并管理 ASGI 生命周期；独立命令 `octop-cloud` 与 `octop-local`。现有默认入口待 P6 验收后切换，不提供第三种最终产品模式。
+- `launch.py` 选择新工厂并管理 ASGI 生命周期；独立命令 `octop-cloud` 与 `octop-local`。P6 已将 CLI/Electron 的默认入口切换到对应新工厂，不提供第三种产品模式。
 
 ### 2.3 最小 schema 与后续演进
 
@@ -165,21 +165,21 @@ uv run --no-dev --extra local-runtime octop-local --home /path/to/local --port 8
 
 未指定 home 时，使用 `$OCTOP_HOME/cloud` 与 `$OCTOP_HOME/local`（根目录默认 `~/.octop`）。各自读取自己的 config.json，云端数据库为 cloud.db，本地为 local.db。云端可通过 `OCTOP_CLOUD_DATABASE_URL` 使用 PostgreSQL；本地拒绝 PostgreSQL URL 和非 loopback 监听地址。
 
-- 显式 `octop run --role cloud` / `--role desktop` 同样选择新云端/本地工厂；不指定 role 的产品默认入口在 P6 切换，避免旧 UI 接入尚未提供的新业务 API。
-- Electron 调试参数 `--local-runtime` 选择新 sidecar，主进程每次生成独立本机 API token；默认窗口 UI 的 API 迁移在 P6，不把调试入口当作完整产品交付。
+- 显式 `octop run --role cloud` / `--role desktop` 同样选择新云端/本地工厂；P6 起不指定 role 默认启动云端管理应用。
+- P6 起 Electron 默认启动新 sidecar，主进程每次生成独立本机 API token；新产品 UI 使用独立 API 客户端，无需 `--local-runtime`。
 - 独立本地 API 通过 Bearer token 授权。由调用方使用 `OCTOP_LOCAL_API_TOKEN` 提供至少 32 字符的本机访问凭证，或由可信应用装配获得本次启动随机生成的 token；它不是云端登录凭证，不下发供应商 Key。
 - 两端 `GET /api/health` 返回协议版本、role、就绪状态和 schema_version；云端 P1 仅提供健康和可选 API 文档，没有认证或资源业务路由。
 - 本地提供实例列表/创建、线程创建，以及 `/api/agents/{agent_id}/threads/{thread_id}/ws`。WS 接受 start（text）、resume（approve/reject decisions）、cancel；事件有稳定 turn_id、thread_id 和递增 sequence。
 - WS 握手使用 Authorization Bearer 请求头，不接受 URL 查询参数中的凭证，避免本机 token 出现在访问日志中；桌面 relay 的产品接入在 P6 完成。
 - 本地工具流直接由 Harness 提供，写文件、编辑文件和 Shell 执行需审批。取消未批准的写入后，新 turn 不应执行之前的操作；重启将未完成 turn 标记为 interrupted，不自动重放。
 - 平台模型适配只允许由可信 Python 装配注入。P1 用真实 Harness 和内存模型 stub 验收；生产默认未连接 P3 网关时返回 PLATFORM_MODEL_UNAVAILABLE，HTTP/config.json 不支持供应商地址、Key 或测试模式。
-- `legacy-runtime` extra 仅供尚未退役的旧代码回归；不是新的第三种后端。便携包新依赖导出使用 local-runtime，不包含旧服务器依赖。
+- P6 已移除 `legacy-runtime` extra；旧模块回归依赖仅存在于 `legacy-tests` 开发 dependency group，不是第三种后端。便携包新依赖导出使用 local-runtime，不包含旧服务器依赖。
 
 ## 8. 阶段门槛与尚未完成项
 
 P0 交付物是本合同、能力审计和实现前置条件。P1 验收的是新应用与 Harness 最小运行链，旧定义 CRUD 不计入新资源管理成果。新版认证、资源发布、计费、同步和产品 UI 分别属于后续阶段。
 
-P2 已获用户授权，实施了密码 + TOTP MFA（含恢复码）、云端单设备授权、Electron 安全凭证交接与本地账号隔离，详见 [cloud-identity.md](cloud-identity.md)。新云端身份 schema 为 v2；本地沿用 v1，由已验证的账号身份选择各自的数据库与工作区。P3 已接入平台模型网关、原生协议、额度和结算，见 [platform-models.md](platform-models.md)。P4 已完成资源发布/分配、资源 outbox、安装回执和个人副本，见 [platform-resources.md](platform-resources.md)；当前云端 schema v4、本地 v2。P5–P7 尚未开始，聊天/文件/记忆同步及产品页面仍按 Plan.md 各阶段验收。
+P2 已获用户授权，实施了密码 + TOTP MFA（含恢复码）、云端单设备授权、Electron 安全凭证交接与本地账号隔离，详见 [cloud-identity.md](cloud-identity.md)。新云端身份 schema 为 v2；本地沿用 v1，由已验证的账号身份选择各自的数据库与工作区。P3 已接入平台模型网关、原生协议、额度和结算，见 [platform-models.md](platform-models.md)。P4 已完成资源发布/分配、资源 outbox、安装回执和个人副本，见 [platform-resources.md](platform-resources.md)；P5 增加逻辑备份与文件分片，当前云端 schema v5、本地 v3；P6 已完成产品界面和生命周期的候选运行库验收，见 [product-applications.md](product-applications.md)。运行库正式发布/依赖锁定待执行，P7 未开始。
 
 P2 审查后直接复用了 Argon2 密码策略、TOTP 原语、恢复码生成/规范化和 Fernet 能力；MFA 包的旧服务入口改为按需导出以切断 SharedServices 依赖。新 Token 采用独立 purpose 的随机不透明凭证、服务端摘要和实时身份校验，未迁入旧 JWT 的离线角色信任。所选登录方式已由用户明确为密码 + TOTP，不迁入 SSO、LDAP 或 Passkey。Electron 复用 DeviceCredentialStore/safeStorage，但云端长期凭证与旧 loopback 凭证存储隔离。
 

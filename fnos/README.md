@@ -1,5 +1,7 @@
 # Octop — 飞牛 FnOS 安装包
 
+> P6：默认部署已切换为独立云端应用。当前可执行入口与首次配置见 [产品说明](../docs/product-applications.md)。下文的旧 full/lite、网页 setup、IM/桌面服务器及 FPK 发布说明属于待 P7 更新的历史记录，不能用于新产品部署。
+
 本目录包含将 [TencentCloud/Octop](https://github.com/TencentCloud/Octop) 打包为飞牛 fnOS `.fpk` 安装包所需的全部文件，并附带自动同步上游 + 自动构建的 GitHub Actions。
 
 ## 首次使用（初始账号）

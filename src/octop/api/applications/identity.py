@@ -242,3 +242,26 @@ async def update(user_id: int, body: UserUpdate, service: Service, token: Token)
     return await _call(
         partial(service.update_user, token, user_id, enabled=body.enabled, role=body.role)
     )
+
+
+@router.get(
+    "/users/{user_id}/devices",
+    tags=["users"],
+    response_model=list[DeviceView],
+    summary="Inspect a user's current device as an administrator",
+)
+async def user_devices(user_id: int, service: Service, token: Token) -> list[DeviceView]:
+    return await _call(service.devices, token, user_id)
+
+
+@router.delete(
+    "/users/{user_id}/devices/{device_id}",
+    tags=["users"],
+    status_code=204,
+    summary="Revoke a user's device as an administrator",
+)
+async def revoke_user_device(
+    user_id: int, device_id: str, service: Service, token: Token
+) -> Response:
+    await _call(service.revoke, token, device_id, user_id)
+    return Response(status_code=204)

@@ -1,0 +1,64 @@
+# P6 产品入口与桌面生命周期
+
+本产品由独立云端应用、Electron 桌面壳和本机 Python sidecar 组成。云端只管理账号、设备、资源、模型、费用和备份；Agent 与工具在桌面运行。P6 目前以 P5 候选运行库验收，正式运行库发布和 Octop 最低版本锁定仍是交付前置项。
+
+## 启动和首次配置
+
+云端安装 `octop[cloud]`，先运行交互式 `octop-cloud-init` 创建第一个管理员，然后运行 `octop-cloud`。`octop run` 默认也是云端；可通过 `--home` 指定云端自己的目录，或使用 `OCTOP_HOME` 下的 `cloud/`。
+
+```sh
+uv sync --no-dev --extra cloud
+uv run --no-sync octop-cloud-init
+uv run --no-sync octop-cloud --host 127.0.0.1 --port 8088
+```
+
+`cloud/config.json` 支持 `default_timezone`、`enable_api_docs` 和数据库配置；PostgreSQL 使用 `OCTOP_CLOUD_DATABASE_URL`。设置 `enable_api_docs: true` 后，`/api/docs` 提供 Scalar 文档。`octop health --role cloud --url http://127.0.0.1:8088` 校验角色与就绪状态。管理员初始化仅使用账号领域服务，不会额外启动模型网关或运行请求恢复任务。
+
+Docker 默认镜像只安装 cloud extra，不包含 Harness、Memory、Browser、Gateway、Node 工具执行环境或虚拟桌面。使用 `deploy/docker/docker-compose.yml` 构建和启动；可在容器启动后交互执行 `octop-cloud-init`，或者通过 Secret 注入 `OCTOP_BOOTSTRAP_PASSWORD`，仅在账号库为空时初始化。密码不会写入凭据文件或命令行，服务启动前清除该环境变量。容器不会开启旧网页 setup，也不会生成默认密码。HTTP 开发监听与生产反向代理/TLS 的边界与 [身份说明](cloud-identity.md) 一致。
+
+桌面壳默认启动 `run --role desktop`，随机生成本机 API 凭证。用户首次打开桌面应用时，在登录页配置 HTTPS 云端地址（本机开发可用 loopback HTTP），然后使用账号密码、TOTP 或恢复码登录并绑定设备。替换已有设备需要在界面中明确确认；不会自动顶替旧设备。
+
+也可提前运行 `octop local-config --cloud-url https://cloud.example.com`。配置写入 `local/config.json`，账号已选择时禁止更改云端地址。桌面长期设备凭证仍只由 Electron main 和系统凭据存储持有，renderer 只得到身份与操作结果。本机 API 凭证不传入 renderer。
+
+`octop-local` 和便携包 `start.sh` / `start.bat` 供本机运行诊断，不是网页聊天入口；手工调用本机 API 需要显式提供足够强的 `OCTOP_LOCAL_API_TOKEN`。正常产品使用 Electron 的受控 HTTP 代理与 WebSocket relay。开发 UI 同样经过主进程自定义协议，不把本机凭证注入 Vite 环境或 JS 包。
+
+## 产品界面
+
+| 角色 | 页面 |
+| --- | --- |
+| 桌面 | 聊天、Agent、Skills、工作区文件、同步、用量与费用 |
+| 云端管理员 | 用户、设备与安装回执、Agent/skills 发布和分配、供应商与平台模型、额度费用与核对、账号安全 |
+| 云端普通账号 | 自己的设备、用量费用、密码与 MFA |
+
+云端静态页面与 API 都使用独立路由集合。旧 `/chat`、setup、终端、浏览器控制、IM、Cron、Bridge 等入口不挂载；未知 API 返回 404，不回退为 SPA。云端普通账号不能通过修改前端 URL 获得管理权限。
+
+桌面资源支持创建个人 Agent/skill、编辑个人版本、为平台资源创建个人副本，以及同步与重试安装。当前版本、期望版本、已安装版本和同步/安装错误分开显示。Agent 引用明确的 skill 版本；平台发布不会覆盖个人副本。云端可分别发布 Agent 与 skill，再分配到用户当前绑定的设备。设备页展示实际安装回执。
+
+聊天读取 P5 保存的消息投影，展示消息、工具调用、附件、运行状态及审批；工具参数在审批前可见。打开会话、切换语言、重新连接和读取历史都不会发送 start/resume。断线后必须显式重新连接；等待审批的操作需要用户明确批准或拒绝。只读归档可以查看历史，但不能执行新任务。文件页只列出支持同步的工作区附件和产物，历史附件按消息内的固定内容引用下载。
+
+同步页只根据持久化 outbox 与云端确认展示待同步、冲突和错误，提供重试与显式恢复。恢复会跳过有本地未同步修改的 Agent，不恢复运行检查点。资源安装问题在 Agent/Skills 页面处理；数据同步问题在同步页处理。产品界面不展示协议游标。
+
+用量读取服务端预算、预占、已结算与待核对状态。JS 解析前保留账本整数金额的字符串形式，避免大额纳单位被 Number 舍入；设置额度时使用十进制到整数的精确转换。供应商 Key 仅存在于云端管理员表单和云端加密存储，桌面只选择平台逻辑模型。
+
+CLI 文案遵循终端 `LC_ALL` / `LC_MESSAGES` / `LANG`，不读取旧管理数据库；语言不是应用 config.json 的字段。界面支持 zh/en，语言选择保存到当前浏览器/桌面偏好，并在 API 请求中发送 `Accept-Language`。桌面日期统一使用已验证云端身份的 `timezone`，云端页面使用同一平台时区，不取操作系统时区作为业务显示规则。
+
+## 退出、休眠和唤醒
+
+1. Electron 立即关闭新请求入口，通过仅主进程可访问的 `/api/lifecycle/prepare` 通知 sidecar。renderer 代理拒绝 cloud 配置/会话及 lifecycle 控制路径，包括编码路径。
+2. sidecar 拒绝新 turn，取消运行任务，保存 interrupted 状态；待审批任务也变为 interrupted。关闭并等待记忆写入器后，限时 2 秒尝试最终资源和数据同步。
+3. 未收到确认的内容继续保留在 outbox。准备操作超时或失败时，Electron 停止 sidecar；不等待全部大文件传完，也不把超时当成同步成功。
+4. 唤醒先等待保存/停机完成，再重新获取并验证云端设备授权。必要时重启 sidecar，然后重新选择同一账号的数据目录。不会发送聊天、恢复审批或重放工具命令。
+5. 快速连续休眠/唤醒按顺序处理，只有最后一次唤醒可以重新开放请求入口。退出状态禁止后来的唤醒重新打开入口。
+6. 强制终止无法执行最后同步；下次启动根据本地持久状态恢复为 interrupted，不自动执行旧任务。
+
+窗口隐藏到托盘时应用仍存活；真正退出通过系统 Quit/退出菜单或已有“关闭即退出”偏好触发。云端不接管任何中断的任务。账号退出会关闭本机账号，同时尽力撤销远端设备；未确认远端撤销时界面会提示在云端设备页处理。
+
+## 旧入口退役与保留代码
+
+默认 CLI 注册表仅保留 run、cloud-init、local-config、health、version 和 completion。旧启动器不再装配 `OctopServer`、旧应用容器、AgentManager、Gateway、Cron 或 Bridge。仅供旧模块回归使用的依赖移到开发 dependency group `legacy-tests`；产品没有 `legacy-runtime` 安装模式。
+
+旧 API、CLI 辅助模块和旧页面中尚被回归测试或公共能力引用的源码暂不批量删除；新应用入口和构建图不引用旧产品编排。已删除仅验证退役 CLI、旧 setup 容器、虚拟桌面镜像和 FnOS 旧启动器的测试，并以本阶段的角色边界、首次初始化及中断恢复用例替代；保留共享模块回归测试，但按本轮用户要求不运行无关用例。
+
+旧 mobile/cluster Compose 已移除，旧全功能 FnOS 启动器明确拒绝启动，避免复用旧向导和凭据假设。FnOS 新包、镜像发布矩阵、CI、原生安装器以及 Linux/Windows/macOS 的实机生命周期验收属于 P7，不能用当前候选验收替代。现有 Helm 模板已改用 cloud DSN Secret（`url` 键）与新初始化变量；实际 Chart 发布和跨节点部署仍在 P7。
+
+P5 的候选运行库未在本轮发布。`uv.lock` 本轮仅因退役 extras 和开发依赖分组而重新生成，Harness/Memory 正式 pin 仍是 P4 版本。开发验证继续安装 P5 wheel 并使用 `UV_NO_SYNC=1`，不能将普通 frozen 安装宣称为已经切到 P5。

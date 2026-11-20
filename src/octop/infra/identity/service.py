@@ -193,13 +193,16 @@ class CloudIdentity:
             raise fail(ErrorCode.FORBIDDEN)
         return principal
 
-    def bootstrap(self, username: str, password: str) -> UserView:
+    def bootstrap(self, username: str, password: str, *, if_empty: bool = False) -> UserView:
         validate_password_policy(password)
         hashed = hash_password(password)
         # Serialize the empty-DB check across workers via the persistent key.
         with self.repo.transaction() as tx:
             tx.lock_bootstrap()
-            if tx.users():
+            users = tx.users()
+            if users:
+                if if_empty:
+                    return self._view(tx, users[0])
                 raise fail(ErrorCode.DATABASE_NOT_EMPTY)
             return self._view(tx, tx.create_user(username.lower(), hashed, "admin"))
 
@@ -445,10 +448,12 @@ class CloudIdentity:
             tx.seen(user.user_id, int(time.time()))
             return self._issue(tx, user, "device", device=device)
 
-    def devices(self, token: str) -> list[DeviceView]:
+    def devices(self, token: str, user_id: int | None = None) -> list[DeviceView]:
         with self.repo.transaction() as tx:
-            user = self._principal(tx, token, "account").user
-            d = tx.device(user.user_id)
+            principal = self._principal(tx, token, "account")
+            if user_id is not None:
+                self._admin(tx, token)
+            d = tx.device(user_id if user_id is not None else principal.user.user_id)
             return (
                 [
                     DeviceView(
@@ -463,13 +468,16 @@ class CloudIdentity:
                 else []
             )
 
-    def revoke(self, token: str, device_id: str) -> None:
+    def revoke(self, token: str, device_id: str, user_id: int | None = None) -> None:
         with self.repo.transaction() as tx:
             principal = self._principal(tx, token)
-            device = tx.device(principal.user.user_id)
+            if user_id is not None:
+                self._admin(tx, token)
+            owner_id = user_id if user_id is not None else principal.user.user_id
+            device = tx.device(owner_id)
             if not device or device.device_id != device_id:
                 raise fail(ErrorCode.NOT_FOUND)
-            tx.revoke_device(principal.user.user_id)
+            tx.revoke_device(owner_id)
 
     def logout(self, token: str) -> None:
         with self.repo.transaction() as tx:

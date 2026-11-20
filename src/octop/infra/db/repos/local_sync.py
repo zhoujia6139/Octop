@@ -183,6 +183,15 @@ class LocalSyncRepo:
             ).fetchone()
             return bytes(row[0]) if row else None
 
+    def blob_size(self, checksum: str) -> int:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(length(content)),0) FROM local_sync_chunks WHERE digest=?",
+                (checksum,),
+            ).fetchone()
+        assert row is not None
+        return int(row[0])
+
     def finish_chunks(self, staged: str, checksum: str | None) -> None:
         with self.db.transaction() as conn:
             if checksum:

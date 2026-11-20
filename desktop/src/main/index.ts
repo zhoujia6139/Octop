@@ -7,6 +7,7 @@ import {
   nativeImage,
   net,
   protocol,
+  powerMonitor,
   screen,
   shell,
   Tray,
@@ -23,7 +24,6 @@ import { pathToFileURL } from "node:url";
 import {
   IPC_CHANNELS,
   type ClientSettings,
-  type IssuedSession,
   type PlatformInfo,
   type UpdateCheckResult,
 } from "../shared/ipc-contract";
@@ -31,7 +31,7 @@ import { resolveAppVersion } from "./app-version";
 import { desktopLog, installDesktopLog } from "./log/desktop-log";
 import { DeviceCredentialStore } from "./session/device-credential";
 import { CloudSessionClient } from "./session/cloud-session";
-import { DeviceSessionClient } from "./session/device-session";
+import { RuntimeLifecycle } from "./supervisor/lifecycle";
 import { safeStorageCipher, warnIfKeychainUnavailable } from "./session/safe-storage-cipher";
 import { ClientSettingsStore, defaultClientSettingsPath } from "./storage/client-settings";
 import { readLoginShellEnv, resolveOctopHome } from "./supervisor/shell-env";
@@ -118,9 +118,7 @@ interface PortableManifestFile {
 
 let supervisor: SidecarSupervisor | null = null;
 let settingsStore: ClientSettingsStore;
-// §7 accounts: renews the Dashboard session without a password. Registered by
-// the renderer once it holds a JWT; used whenever that JWT has expired.
-let deviceSession: DeviceSessionClient | null = null;
+// Renewable cloud credentials are owned by main; local API access is per launch.
 let cloudSession: CloudSessionClient | null = null;
 let localApiToken: string | null = null;
 // Resolved after `whenReady` — `app.getVersion()` must not run at module load.
@@ -152,6 +150,20 @@ let backend: {
   octopHome: string;
   portableDir: string;
 } | null = null;
+
+const runtimeLifecycle = new RuntimeLifecycle({
+  admission: (open) => { apiAdmissionClosed = !open; },
+  prepare: async () => { await cloudSession?.prepare(); },
+  stop: async () => { await supervisor?.stop(); },
+  resume: async () => {
+    if (!supervisor?.isRunning() && !(await startBackend())) throw new Error("CLOUD_UNAVAILABLE");
+    await cloudSession?.resume();
+  },
+  changed: (ok) => {
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send(IPC_CHANNELS.onBackendReady, { ok });
+  },
+  warn: () => desktopLog().warn("local lifecycle operation could not be confirmed"),
+});
 
 // A custom scheme used as the renderer origin must be declared privileged
 // BEFORE the app is ready, otherwise `octop://app/` is not treated as a
@@ -256,21 +268,36 @@ function registerProtocol(staticRootDir: string): void {
     const pathname = url.pathname;
 
     if (isApiPath(pathname)) {
-      if (apiAdmissionClosed) return new Response("update in progress", { status: 503 });
+      if (apiAdmissionClosed) return Response.json({ error: { code: "LOCAL_RUNTIME_PAUSED" } }, { status: 503 });
       const target = toBackendUrl(backendPort, pathname, url.search);
       if (localApiToken && isCloudControlPath(url.pathname)) {
         return new Response(null, { status: 403 });
       }
+      if (request.method === "OPTIONS") {
+        const origin = request.headers.get("Origin");
+        if (!origin || origin !== dashboardOrigin) return new Response(null, { status: 403 });
+        return new Response(null, { status: 204, headers: {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,HEAD,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type,Accept-Language",
+        } });
+      }
       const headers = sanitizeForwardHeaders(request.headers);
       if (localApiToken) headers.authorization = `Bearer ${localApiToken}`;
       headers["x-octop-proxy"] = "1";
-      return net.fetch(target, {
+      const response = await net.fetch(target, {
         method: request.method,
         headers,
         body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
         // @ts-expect-error duplex is required for streaming request bodies in undici
         duplex: "half",
       });
+      // The development renderer uses Vite while API credentials stay in main.
+      // Permit only that shell-selected origin to read the custom-scheme proxy.
+      const responseHeaders = new Headers(response.headers);
+      if (dashboardOrigin) responseHeaders.set("Access-Control-Allow-Origin", dashboardOrigin);
+      responseHeaders.set("Access-Control-Expose-Headers", "X-Octop-File-Size");
+      return new Response(response.body, { status: response.status, headers: responseHeaders });
     }
 
     // Escape stays forbidden. A client route with no file falls back to
@@ -314,9 +341,7 @@ function errorMessageOf(err: unknown): string {
 }
 
 /** A JWT the shell will forward: non-empty, bounded, nothing else assumed. */
-function isUsableAccessToken(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 4096;
-}
+
 
 async function showShellMessage(
   win: BrowserWindow | null,
@@ -363,8 +388,8 @@ async function handOffToInstaller(kind: InstallerKind, path: string): Promise<vo
 
 /** Stop Python cleanly and restart it when the installer never took over. */
 async function restartBackend(win: BrowserWindow | null): Promise<void> {
-  apiAdmissionClosed = false;
   const ready = await startBackend();
+  await runtimeLifecycle.resume();
   if (ready) win?.webContents.reload();
 }
 
@@ -394,7 +419,7 @@ async function runShellUpdate(
       verify: async () => true,
       stopSidecar: async () => {
         // §6.3 step 1 — refuse new API admissions, then ask Python to exit.
-        apiAdmissionClosed = true;
+        await runtimeLifecycle.suspend();
         if (!supervisor) return { clean: true, exitCode: null };
         return supervisor.stop();
       },
@@ -548,19 +573,10 @@ function registerIpcHandlers(): void {
     }
   });
   ipcMain.handle(IPC_CHANNELS.cloudCurrent, (event) => trustedCloudCaller(event).current());
-
-  ipcMain.handle(IPC_CHANNELS.sessionRegister, (_event, accessToken: unknown): Promise<boolean> => {
-    if (!isUsableAccessToken(accessToken)) return Promise.resolve(false);
-    return deviceSession?.register(accessToken) ?? Promise.resolve(false);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.sessionRenew, (): Promise<IssuedSession | null> => {
-    return deviceSession?.renew() ?? Promise.resolve(null);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.sessionRevoke, (_event, accessToken: unknown): Promise<boolean> => {
-    if (!isUsableAccessToken(accessToken)) return Promise.resolve(false);
-    return deviceSession?.revoke(accessToken) ?? Promise.resolve(false);
+  ipcMain.handle(IPC_CHANNELS.cloudConfig, (event) => trustedCloudCaller(event).configuration());
+  ipcMain.handle(IPC_CHANNELS.cloudConfigure, (event, origin: unknown) => {
+    if (typeof origin !== "string" || origin.length > 2048) throw new Error("AUTH_FAILED");
+    return trustedCloudCaller(event).configure(origin);
   });
 
   // The page reports its theme so the native controls follow it; window buttons
@@ -596,15 +612,11 @@ async function startBackend(): Promise<boolean> {
     bindHost: "127.0.0.1",
   });
   backendPort = port;
-  // P1 explicit integration; the product UI switches to the new API in P6.
-  const localRuntime = process.argv.includes("--local-runtime");
-  if (localRuntime) {
-    localApiToken = randomBytes(32).toString("hex");
-    env.OCTOP_LOCAL_API_TOKEN = localApiToken;
-  }
+  localApiToken = randomBytes(32).toString("hex");
+  env.OCTOP_LOCAL_API_TOKEN = localApiToken;
   const sidecar = new SidecarSupervisor({
     executable: backend.interpreter,
-    args: [backend.launchScript, "run", ...(localRuntime ? ["--role", "desktop"] : [])],
+    args: [backend.launchScript, "run", "--role", "desktop"],
     env,
     cwd: backend.cwd,
     port,
@@ -633,7 +645,7 @@ async function startBackend(): Promise<boolean> {
       if (tail) desktopLog().error(tail);
     }
   }
-  if (ready && localRuntime && cloudSession) {
+  if (ready && cloudSession) {
     void cloudSession.renew().catch(() => desktopLog().info("cloud session renewal unavailable"));
   }
   return ready;
@@ -1056,28 +1068,14 @@ async function boot(): Promise<void> {
   // database it unlocks, and only the main process ever sees it.
   const cipher = safeStorageCipher();
   await warnIfKeychainUnavailable(cipher);
-  const credentialStore = new DeviceCredentialStore(octopHome, cipher);
-  try {
-    // v1 could leave a plaintext credential behind; this is the only place that
-    // adopts it — re-encrypting when a keychain exists, deleting it otherwise.
-    await credentialStore.migrate();
-  } catch (err) {
-    desktopLog().warn(`[desktop] device credential migration failed: ${String(err)}`);
-  }
-  deviceSession = new DeviceSessionClient({
-    store: credentialStore,
-    baseUrl: () => (apiAdmissionClosed || !backendPort ? null : `http://127.0.0.1:${backendPort}`),
+  cloudSession = new CloudSessionClient({
+    store: new DeviceCredentialStore(join(octopHome, "cloud-session"), cipher),
+    localBaseUrl: () => !backendPort ? null : `http://127.0.0.1:${backendPort}`,
+    localToken: () => localApiToken,
     label: `${process.platform}-${process.arch}`,
   });
-
-  if (process.argv.includes("--local-runtime")) {
-    cloudSession = new CloudSessionClient({
-      store: new DeviceCredentialStore(join(octopHome, "cloud-session"), cipher),
-      localBaseUrl: () => apiAdmissionClosed || !backendPort ? null : `http://127.0.0.1:${backendPort}`,
-      localToken: () => localApiToken,
-      label: `${process.platform}-${process.arch}`,
-    });
-  }
+  powerMonitor.on("suspend", () => { void runtimeLifecycle.suspend(); });
+  powerMonitor.on("resume", () => { void runtimeLifecycle.resume(); });
 
   registerProtocol(dashboardRoot(portableDir));
   registerIpcHandlers();
@@ -1153,7 +1151,6 @@ app.on("activate", () => {
 app.on("before-quit", (event) => {
   if (quitting) return;
   destroySystemTray();
-  cloudSession?.stop();
   const sidecar = supervisor;
   const relay = wsRelay;
   if (!sidecar && !relay) return;
@@ -1165,6 +1162,8 @@ app.on("before-quit", (event) => {
   // down, and its listening socket would keep the process alive otherwise.
   void (async () => {
     stopDashboardDevServer();
+    await runtimeLifecycle.shutdown();
+    cloudSession?.stop();
     await relay?.stop();
     await sidecar?.stop();
   })()
@@ -1207,6 +1206,8 @@ async function shutdownFromSignal(signal: NodeJS.Signals): Promise<void> {
   destroySystemTray();
   try {
     stopDashboardDevServer();
+    await runtimeLifecycle.shutdown();
+    cloudSession?.stop();
     await wsRelay?.stop();
     await supervisor?.stop();
   } catch (err) {

@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 import click
 
 from octop.cli.registry import COMMANDS
+from octop.cli.support.product_locale import cli_text
 
 
 def _ensure_utf8_stdio(
@@ -74,13 +75,23 @@ class _LazyCLI(click.Group):
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """Override to avoid importing modules just to read their help text."""
-        rows = [(name, self._registry[name][2]) for name in self.list_commands(ctx)]
+        rows = [
+            (
+                name,
+                cli_text(
+                    {"cloud-init": "cloud_init", "local-config": "local_config"}.get(name, name)
+                ),
+            )
+            for name in self.list_commands(ctx)
+        ]
         if rows:
             with formatter.section("Commands"):
                 formatter.write_dl(rows)
 
 
-@click.group(cls=_LazyCLI, context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    cls=_LazyCLI, help=cli_text("help"), context_settings={"help_option_names": ["-h", "--help"]}
+)
 @click.option(
     "-v",
     "--version",
@@ -90,40 +101,9 @@ class _LazyCLI(click.Group):
     callback=_print_version,
     help="Show the installed octop version.",
 )
-@click.option(
-    "--user",
-    "as_user",
-    default=None,
-    envvar="OCTOP_USER",
-    help="Default --user for subcommands (admin acting on behalf of a user).",
-)
-@click.option(
-    "--agent",
-    "agent_id",
-    default=None,
-    envvar="OCTOP_AGENT",
-    help="Default --agent for subcommands.",
-)
-@click.option(
-    "--json",
-    "json_out",
-    is_flag=True,
-    default=False,
-    help="Emit machine-readable JSON for list-style commands.",
-)
-@click.pass_context
-def cli(
-    ctx: click.Context,
-    as_user: str | None,
-    agent_id: str | None,
-    json_out: bool,
-) -> None:
-    """Octop command-line interface."""
+def cli() -> None:
+    """Octop cloud management and desktop runtime commands."""
     _ensure_utf8_stdio()
-    ctx.ensure_object(dict)
-    ctx.obj["as_user"] = as_user
-    ctx.obj["agent_id"] = agent_id
-    ctx.obj["json_out"] = json_out
 
 
 if __name__ == "__main__":

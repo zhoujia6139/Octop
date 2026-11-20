@@ -46,7 +46,7 @@ export function isApiPath(pathname: string): boolean {
 /** Credential handoff is main-process IPC only, including encoded API paths. */
 export function isCloudControlPath(pathname: string): boolean {
   try {
-    return decodeURIComponent(pathname).startsWith("/api/cloud");
+    return ["/api/cloud", "/api/lifecycle"].some((prefix) => decodeURIComponent(pathname).startsWith(prefix));
   } catch {
     return true;
   }

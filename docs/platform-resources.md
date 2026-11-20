@@ -1,6 +1,6 @@
 # Agent 与 skills 资源发布、分配和个人资源（P4）
 
-P4 使用独立云端与桌面应用，不装配旧 `OctopServer` 或 `AgentManager`。云端保存定义、不可变版本、绑定到当前设备的分配和安装回执；桌面运行 Harness。产品管理页面、资源选择和错误展示在 P6 接入，默认产品入口尚未切换。启动与认证见 [cloud-identity.md](cloud-identity.md)，模型与计费见 [platform-models.md](platform-models.md)。
+P4 使用独立云端与桌面应用，不装配旧 `OctopServer` 或 `AgentManager`。云端保存定义、不可变版本、绑定到当前设备的分配和安装回执；桌面运行 Harness。P6 已接入产品管理页面、资源选择和错误展示，并切换默认入口，见 [产品说明](product-applications.md)。启动与认证见 [cloud-identity.md](cloud-identity.md)，模型与计费见 [platform-models.md](platform-models.md)。
 
 云端 schema v4、本地 schema v2，各自提供 SQLite/PostgreSQL 成对迁移。P3 账本和身份数据不因迁移被重建。旧消费上下文不会自动变成正式资源授权。
 
@@ -81,7 +81,7 @@ Skill spec 为 `kind=skill`、名称、`slug` 和 `files`。每个文件包含 `
 
 复制请求为 `{ "resource_id": "new-personal-id", "operation_id": "stable-copy-op", "revision": 1 }`，其中 `resource_id` 是新副本 ID。依赖副本使用稳定派生 ID，重复复制请求不会新增一套资源。个人副本的提示词、模型及 skills 可随后单独修改，不随平台源更新。
 
-本地草稿、不可变缓存和上传操作共用 SQLite 事务；上传失败和响应丢失保留 operation ID，重启后重试。云端确认前显示 `pending`。修订或授权冲突显示 `conflict` 并保留原草稿与队列，不自动覆盖、重挂或跳过被拒绝的操作。需要保留为独立资源时，可读取草稿内容并以新的个人资源 ID 创建；冲突选择页面在 P6 接入。
+本地草稿、不可变缓存和上传操作共用 SQLite 事务；上传失败和响应丢失保留 operation ID，重启后重试。云端确认前显示 `pending`。修订或授权冲突显示 `conflict` 并保留原草稿与队列，不自动覆盖、重挂或跳过被拒绝的操作。需要保留为独立资源时，可读取草稿内容并以新的个人资源 ID 创建；P6 页面显示冲突并保留草稿，支持创建个人资源或平台个人副本，不静默解决修订冲突。
 
 后台任务随账号启动，约每 30 秒拉取；本地变更与 turn 结束会唤醒它，也可显式重试。此任务只同步资源，不是用户定时任务，不触发模型推理。账号退出/撤销会立即停止授权，取消资源传输，并等待已开始的持久化/安装转换结束后关闭数据库；不会把旧任务转到新账号。
 

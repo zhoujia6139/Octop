@@ -39,10 +39,10 @@ Usage: ./start.sh [--home DIR] [--host HOST] [--port PORT] [octop run args...]
 
 Defaults:
   OCTOP_HOME / --home   ${ROOT}/data
-  bind_host / port      config.json (127.0.0.1:8088 when unset)
+  bind_host / port      local/config.json (loopback, random port when unset)
 
---host and --port override config.json and are saved back to it.
-Pass them only when you want to change the saved listen address.
+--host and --port are process overrides. The local API requires a local token;
+use Octop Desktop for the product UI and cloud credential storage.
 
 Environment:
   OCTOP_HOME            User data directory (overridden by --home)
@@ -76,7 +76,7 @@ export PYTHONNOUSERSITE=1
 unset PYTHONPATH || true
 
 echo "[octop] home=${OCTOP_HOME}"
-args=(run)
+args=(run --role desktop)
 if [[ -n "$HOST" ]]; then
   args+=(--host "$HOST")
 fi

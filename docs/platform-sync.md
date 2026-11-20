@@ -68,6 +68,6 @@ P5 使用 `octop-harness` 的 `BackendWorkspace.for_local_directory/scan_sync_fi
 | 本机 | `GET /api/sync/records/{item_id}/content?offset=` | 当前文件版本的本地缓存块 |
 | 本机 | `GET /api/sync/messages/{message_id}/attachments/{file_id}?offset=` | 消息所引用的历史附件内容块 |
 
-聊天 WS 的 start 命令可以附带 `attachment_ids`，只接受本 Agent 的已复制附件；resume/cancel 不接受附件。同步状态产品页面及退出/休眠事件的 Electron 接入属于 P6，完整安装器/实机验证属于 P7。
+聊天 WS 的 start 命令可以附带 `attachment_ids`，只接受本 Agent 的已复制附件；resume/cancel 不接受附件。P6 已接入同步状态页面及 Electron 退出/休眠处理，见 [产品说明](product-applications.md)；完整安装器/实机验证仍属于 P7。
 
 专项验证：`uv run pytest tests/integration/test_platform_sync.py tests/unit/sync -q`；配置专用 `OCTOP_TEST_DATABASE_URL` 后运行同一组用例覆盖 PostgreSQL。Memory 库的专用 PG 用 `TEST_POSTGRES_DSN`，不使用生产数据。

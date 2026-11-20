@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import httpx
@@ -47,6 +49,9 @@ class LocalAccounts:
             transport=cloud_transport, trust_env=False, follow_redirects=False, timeout=10
         )
         self.model_origin: str | None = None
+        self._preparing = False
+        self._prepared = asyncio.Event()
+        self._prepared.set()
         self.started = False
 
     async def start(self) -> None:
@@ -55,7 +60,7 @@ class LocalAccounts:
         self.started = True
 
     async def close(self) -> None:
-        async with self._lock:
+        async with self._idle_lock():
             try:
                 await self._detach()
             finally:
@@ -89,8 +94,63 @@ class LocalAccounts:
             await previous.close(close_model_factory=False)
 
     async def detach(self) -> None:
-        async with self._lock:
+        async with self._idle_lock():
             await self._detach()
+
+    @asynccontextmanager
+    async def _idle_lock(self) -> AsyncIterator[None]:
+        while True:
+            await self._prepared.wait()
+            async with self._lock:
+                # A preparation may have acquired the lock ahead of us after
+                # the event was read. Its final upload still needs this lock.
+                if self._preparing:
+                    continue
+                yield
+                return
+
+    async def configure_cloud(self, cloud_url: str) -> None:
+        from octop.infra.resources.local import durable
+        from octop.infra.utils.json_file import read_json_object, write_json_atomic
+
+        async with self._lock:
+            if self.identity or self.runtime or self._preparing:
+                raise OctopError.localized(ErrorCode.AUTH_FAILED)
+            settings = LocalSettings.model_validate(
+                {**self.settings.model_dump(), "cloud_url": cloud_url}
+            )
+
+            def save() -> None:
+                path = settings.home / "config.json"
+                data = read_json_object(path) or {}
+                data["cloud_url"] = settings.cloud_url
+                settings.home.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(path, data)
+
+            await durable(save)
+            self.settings = settings
+
+    async def prepare_shutdown(self) -> None:
+        async with self._lock:
+            if self._preparing:
+                raise OctopError.localized(ErrorCode.LOCAL_RUNTIME_PAUSED)
+            self._preparing = True
+            self._prepared.clear()
+            runtime = self.runtime
+        try:
+            # Do not hold the account lock while a final upload acquires its
+            # identity-scoped device access. Concurrent logout/revocation can
+            # still retire this runtime and deny that upload.
+            if runtime:
+                await runtime.prepare_shutdown()
+        finally:
+            async with self._lock:
+                try:
+                    if self.runtime is runtime:
+                        await self._detach()
+                finally:
+                    self._preparing = False
+                    self._prepared.set()
 
     async def _validate(self, access_token: str) -> IdentityView:
         if not self.settings.cloud_url:
@@ -116,6 +176,8 @@ class LocalAccounts:
 
     async def attach(self, grant: TokenView) -> IdentityView:
         async with self._lock:
+            if self._preparing:
+                raise OctopError.localized(ErrorCode.LOCAL_RUNTIME_PAUSED)
             verified = await self._validate(grant.access_token)
             if verified != grant.identity:
                 raise OctopError.localized(ErrorCode.AUTH_FAILED)

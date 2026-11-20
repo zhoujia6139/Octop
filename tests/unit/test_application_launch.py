@@ -104,3 +104,30 @@ def test_cloud_initializer_creates_only_first_admin(tmp_path, monkeypatch):
 def test_local_cloud_origin_rejects_insecure_or_credential_urls(tmp_path, url):
     with pytest.raises(ValidationError):
         LocalSettings(home=tmp_path, cloud_url=url)
+
+
+def test_cloud_initializer_does_not_boot_a_gateway_or_rewrite_existing_account(
+    tmp_path, monkeypatch
+):
+    from octop.cli.commands.application import cloud_init
+    from octop.infra.models.gateway import ModelGateway
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("account initialization must not create a model gateway")
+
+    monkeypatch.setattr(ModelGateway, "__init__", forbidden)
+    monkeypatch.delenv("OCTOP_CLOUD_DATABASE_URL", raising=False)
+    runner = CliRunner()
+    arguments = ["--home", str(tmp_path), "--username", "admin", "--if-empty"]
+    assert (
+        runner.invoke(
+            cloud_init, arguments, input="Bootstrap-good-5391\nBootstrap-good-5391\n"
+        ).exit_code
+        == 0
+    )
+    assert (
+        runner.invoke(
+            cloud_init, arguments, input="Changed-but-ignored-7491\nChanged-but-ignored-7491\n"
+        ).exit_code
+        == 0
+    )

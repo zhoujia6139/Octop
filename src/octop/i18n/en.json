@@ -578,7 +578,8 @@
     "WEBAUTHN_LOGIN_DISABLED": "Passkey sign-in on the login page is turned off. An administrator can enable it under App settings → Passkeys.",
     "DEVICE_REVOKED": "The device authorization has expired or been revoked. Sign in and bind this device again.",
     "DEVICE_BINDING_EXISTS": "An executing device is already bound. Confirm replacement to revoke it.",
-    "CLOUD_UNAVAILABLE": "The cloud service is unavailable. Please try again later."
+    "CLOUD_UNAVAILABLE": "The cloud service is unavailable. Please try again later.",
+    "LOCAL_RUNTIME_PAUSED": "Local execution is paused. Wait for cloud sign-in to be revalidated."
   },
   "desktop": {
     "install_log_deps": "Installing Python dependencies…",
@@ -1253,5 +1254,19 @@
     "summary_dry_run": "{migrated} to migrate, {skipped} skipped, {failed} failed.",
     "dry_run_hint": "Dry run: nothing was written. Run again without --dry-run to apply.",
     "restart_hint": "If `octop run` is running, restart it to load the migrated providers and channels."
+  },
+  "product_cli": {
+    "help": "Octop cloud management and desktop runtime commands.",
+    "cloud": "Run the independent cloud management application.",
+    "local": "Run the desktop backend on loopback.",
+    "cloud_init": "Create the first cloud administrator with an interactive password.",
+    "run": "Start cloud management (default), or the authenticated desktop sidecar.",
+    "local_config": "Set the trusted cloud origin before opening the desktop app.",
+    "health": "Check application readiness and role.",
+    "version": "Show the installed version.",
+    "completion": "Shell completion utilities.",
+    "if_empty": "Leave existing accounts unchanged.",
+    "tls_pair": "--ssl-certfile and --ssl-keyfile must be supplied together.",
+    "health_mismatch": "The application role does not match or is not ready."
   }
 }

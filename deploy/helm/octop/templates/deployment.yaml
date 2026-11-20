@@ -54,28 +54,12 @@ spec:
               value: 0.0.0.0
             - name: OCTOP_PORT
               value: {{ .Values.service.port | quote }}
-            - name: OCTOP_DATABASE_DRIVER
-              value: postgresql
-            - name: OCTOP_DATABASE_HOST
-              value: {{ include "octop.database.host" . | quote }}
-            - name: OCTOP_DATABASE_PORT
-              value: {{ .Values.database.port | quote }}
-            - name: OCTOP_DATABASE_NAME
+            - name: OCTOP_CLOUD_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.database }}
-                  key: database
-            - name: OCTOP_DATABASE_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.database }}
-                  key: user
-            - name: OCTOP_DATABASE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.database }}
-                  key: password
-            - name: OCTOP_DEFAULT_PASSWORD
+                  key: url
+            - name: OCTOP_BOOTSTRAP_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.admin }}
@@ -87,8 +71,6 @@ spec:
                   key: username
             - name: OCTOP_DEFAULT_TIMEZONE
               value: {{ .Values.config.timezone | quote }}
-            - name: OCTOP_CORS_ORIGINS
-              value: {{ include "octop.corsOrigins" . | quote }}
           startupProbe:
             httpGet:
               path: /api/health

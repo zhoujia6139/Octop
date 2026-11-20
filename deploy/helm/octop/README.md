@@ -1,5 +1,7 @@
 # Octop Helm chart
 
+> P6：默认部署已切换为独立云端应用。当前可执行入口与首次配置见 [产品说明](../../../docs/product-applications.md)。下文的旧 full/lite、网页 setup、IM/桌面服务器及 FPK 发布说明属于待 P7 更新的历史记录，不能用于新产品部署。 新模板数据库 Secret 需要 `url`（已 URI 编码的 PostgreSQL DSN），账号初始化使用 `OCTOP_BOOTSTRAP_PASSWORD`，不再开启网页向导；见 `secrets.example.yaml`。
+
 [中文](README_CN.md)
 
 One release installs Octop and, by default, PostgreSQL with pgvector. Replicas share that control plane. Cron jobs and IM channels take a database lease so only one replica runs each of them. The chart does not install a HorizontalPodAutoscaler.

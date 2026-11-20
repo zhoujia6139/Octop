@@ -301,3 +301,28 @@ test("failed sidecar detachment still clears the remembered login", async () => 
     await fx.cleanup();
   }
 });
+
+test("prepare preserves the renewable credential but closes execution before wake validation", async () => {
+  const fx = await fixture({ respond: (call) => {
+    if (call.url.endsWith("/api/lifecycle/prepare")) return response(204, null);
+    if (call.url.endsWith("/api/auth/login")) return response(200, { session: account, mfa_token: null });
+    if (call.url.endsWith("/api/auth/devices")) return response(201, { session, refresh_token: "kept-until-logout" });
+    if (call.url.endsWith("/api/auth/device/refresh")) return response(200, session);
+    if (call.url.endsWith("/api/cloud/session")) return response(200, identity);
+    if (call.url.endsWith("/api/auth/logout")) return response(204, null);
+    throw new Error("unexpected");
+  } });
+  try {
+    await fx.client.login("alice", "password"); await fx.client.bind();
+    const remembered = await fx.store.read();
+    await fx.client.prepare();
+    assert.equal(fx.client.current(), null);
+    assert.equal(await fx.store.read(), remembered);
+    await assert.rejects(fx.client.renew(), /LOCAL_RUNTIME_PAUSED/);
+    assert.deepEqual(await fx.client.resume(), identity);
+    const persisted = fx.calls.findIndex((call) => call.url.endsWith("/api/lifecycle/prepare"));
+    const refresh = fx.calls.findIndex((call) => call.url.endsWith("/api/auth/device/refresh"));
+    assert.ok(refresh > persisted);
+    assert.ok(!fx.calls.some((call) => /threads\/.*\/ws/.test(call.url)));
+  } finally { await fx.cleanup(); }
+});

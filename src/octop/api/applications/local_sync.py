@@ -156,6 +156,14 @@ async def attachment_content(
     if attachment is None:
         raise OctopError.localized(ErrorCode.NOT_FOUND)
     content = await durable(service.repo.chunk, attachment.sha256, offset)
-    if content is None:
+    size = await durable(service.repo.blob_size, attachment.sha256)
+    if content is None and (
+        size
+        or attachment.sha256 != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    ):
         raise OctopError.localized(ErrorCode.NOT_FOUND)
-    return Response(content=content, media_type="application/octet-stream")
+    return Response(
+        content=content or b"",
+        media_type="application/octet-stream",
+        headers={"X-Octop-File-Size": str(size)},
+    )

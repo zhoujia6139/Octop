@@ -1,0 +1,109 @@
+.product-root {
+  min-height: 100vh;
+  padding-top: var(--octop-caption-row, 0px);
+}
+.product-root > .ant-layout {
+  min-height: calc(100vh - var(--octop-caption-row, 0px));
+}
+.product-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: auto;
+  min-height: 64px;
+  gap: 20px;
+  padding: 12px 24px;
+  background: var(--color-bg-container, transparent);
+}
+.product-header h4 {
+  margin: 0;
+}
+.product-content {
+  padding: 24px;
+  min-width: 0;
+}
+.product-login {
+  width: min(440px, calc(100% - 32px));
+  margin: 64px auto;
+}
+.product-loading {
+  padding: 80px;
+  text-align: center;
+}
+.product-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.product-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.product-chat {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+}
+.product-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 200px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px;
+}
+.product-message {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.product-message pre {
+  overflow: auto;
+  padding: 12px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 8px;
+}
+.product-message img {
+  max-width: 100%;
+}
+.product-message table {
+  border-collapse: collapse;
+}
+.product-message td,
+.product-message th {
+  border: 1px solid #8885;
+  padding: 6px;
+}
+.product-error {
+  margin-bottom: 16px;
+}
+.product-status {
+  margin: 8px 0;
+}
+.product-root .ant-form {
+  margin-top: 16px;
+}
+@media (max-width: 800px) {
+  .product-chat {
+    grid-template-columns: 1fr;
+  }
+  .product-content {
+    padding: 12px;
+  }
+  .product-root .ant-layout-sider {
+    min-width: 130px !important;
+    max-width: 130px !important;
+    width: 130px !important;
+  }
+}
+
+html[data-octop-desktop-chrome="mac"] .product-root {
+  padding-top: 28px;
+}
+.product-header {
+  padding-inline-start: max(24px, var(--window-controls-inset-start, 0px));
+  padding-inline-end: max(24px, var(--window-controls-inset-end, 0px));
+}

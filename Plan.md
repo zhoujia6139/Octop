@@ -1,6 +1,6 @@
 # Octop 桌面 Agent 与云端管理改造计划
 
-> 日期：2026-11-19。状态：P0、P1、P2、P3、P4 已完成验收；P5 功能已完成候选 wheel 验收；运行库正式发布及 Octop 依赖锁定待执行。
+> 日期：2026-11-19。状态：P0–P4 已完成验收；P5、P6 已完成候选运行库下的功能验收；运行库正式发布及 Octop 依赖锁定待执行；P7 未开始。
 >
 > 本次修订采用「基于 octop-harness 建立新的云端与桌面应用层，选择性迁入 Octop 成熟能力」的路线。本文记录已确认的产品边界，并给出后续实现顺序。勾选项表示实现与验收均完成；尚未验收的探索性代码不计为完成。模块名、接口名和表名是设计建议，实施时结合现有代码确定，不代表已存在。
 
@@ -333,7 +333,7 @@ P4 验收记录（2026-11-19）：
 - 后端验收：最终 `make all` 通过，6054 passed、103 skipped；Ruff/格式与 mypy（731 个源文件）通过。最终资源与包专项 `uv run pytest tests/integration/test_platform_resources.py tests/unit/resources -q -x --tb=short` 为 49 passed、21 skipped；跳过项为未设置 PG 环境的参数化用例，已另行实测。身份、模型、独立应用、迁移与 i18n 的组合回归另有 182 passed、57 skipped，之后新增的删除/额度和 Unicode 碰撞用例均已纳入最终全量检查。
 - 数据库与隔离验收：临时 PostgreSQL 17 下 `uv run pytest tests/integration/test_platform_resources.py tests/integration/test_platform_models.py tests/integration/test_cloud_identity.py tests/unit/db/test_application_migrations.py tests/unit/resources -q -x --tb=short` 为 147 passed、2 skipped，含 SQLite/PG 两种数据库；两个跳过项为 Embedding 流式组合。仅安装 cloud extra 的全新环境没有 Harness、Memory、Browser、Gateway 或 LangChain，实际完成发布、分配、固定依赖下载、实例授权与 schema/OpenAPI 检查；测试 schema、容器及临时凭证已清理。
 - 前端与文档：仅增加错误码的 zh/en 文案，Dashboard `npx tsc -b`、`npm run lint`（0 errors、75 条现有 warnings）和 `make build-frontend` 通过；未修改 Electron 或产品页面。Scalar HTML、OpenAPI 的 summaries、请求/响应类型及鉴权已检查；本轮未宣称完成 GUI 渲染、OS keychain 或原生安装器验收，Linux/Windows 实机/CI 与产品集成仍按 P7 验收。配置与接口见 [docs/platform-resources.md](docs/platform-resources.md)，身份、模型和共享合同文档已同步更新。
-- 暂停点（P4 验收时）：P4 完成后停在 P5 之前；当时 P5–P7 尚未开始。当前 P5 的候选包验收见下节，P6/P7 仍未开始。
+- 暂停点（P4 验收时）：P4 完成后停在 P5 之前；当时 P5–P7 尚未开始。当前 P5 的候选包验收及 P6 记录见下节，P7 未开始。
 
 ### P5：聊天、文件与记忆可靠同步
 
@@ -371,14 +371,28 @@ P5 实施记录（2026-11-20，候选包验收完成，发布待执行）：
 
 ### P6：接入产品 UI、生命周期并退役旧入口
 
-- [ ] 选择性复用现有桌面聊天、文件和通用组件，通过新的 API 客户端接入本地应用；提供云端登录、平台资源/个人资源、同步状态、安装错误和额度费用展示。
-- [ ] 接入云端管理页面，复用适合的表单和组件；新路由表不包含网页聊天、远程终端、浏览器控制与本地执行入口。
-- [ ] 将默认 CLI、Electron 和部署入口全部切换到新应用工厂，确认无需再依赖旧 `OctopServer`、`AppRuntime`、`AgentManager`、Gateway、IM、Cron 或 Bridge。
-- [ ] 审查旧代码的实际引用与测试后退役旧入口及仅服务排除能力的依赖；已经迁入的公共函数保持单一实现，不为了删旧目录破坏新应用。
-- [ ] 接入退出和休眠处理，保存中断状态与 outbox，唤醒后不自动重放有副作用的工具。
-- [ ] 为新产品提供所需 CLI、首次启动、健康检查和 API 文档；迁入语言与时区处理，不为旧 setup/CLI 命令补兼容层。
+- [x] 选择性复用现有桌面聊天、文件和通用组件，通过新的 API 客户端接入本地应用；提供云端登录、平台资源/个人资源、同步状态、安装错误和额度费用展示。
+- [x] 接入云端管理页面，复用适合的表单和组件；新路由表不包含网页聊天、远程终端、浏览器控制与本地执行入口。
+- [x] 将默认 CLI、Electron 和部署入口全部切换到新应用工厂，确认无需再依赖旧 `OctopServer`、`AppRuntime`、`AgentManager`、Gateway、IM、Cron 或 Bridge。
+- [x] 审查旧代码的实际引用与测试后退役旧入口及仅服务排除能力的依赖；已经迁入的公共函数保持单一实现，不为了删旧目录破坏新应用。
+- [x] 接入退出和休眠处理，保存中断状态与 outbox，唤醒后不自动重放有副作用的工具。
+- [x] 为新产品提供所需 CLI、首次启动、健康检查和 API 文档；迁入语言与时区处理，不为旧 setup/CLI 命令补兼容层。
 
 验收：产品入口与第 1 节一致；主动退出、强制退出和休眠唤醒后没有重复执行、跨账号同步或虚假的已同步状态；云端无法通过遗留路由执行本机操作。
+
+P6 实施记录（2026-11-20，候选运行库功能验收完成）：
+
+- 桌面 UI：新产品路由与页面在 `dashboard/src/pages/Product/`，独立 typed client 在 `dashboard/src/api/product/`。接入云端地址配置、密码/MFA/恢复码登录、明确设备替换、个人与平台 Agent/skills、个人副本、期望/实际安装版本及错误、工作区文件、消息与工具审批、同步重试/显式恢复、额度与费用。历史读取和重连不发送 start/resume；语言切换不重建正在执行的 WS。使用 P5 持久化投影展示会话，首条消息生成本地会话标题，不新增辅助模型调用。
+- 云端管理：用户、设备撤销和安装回执、Agent/skill 草稿与发布分配、加密供应商配置、逻辑模型/费率/授权、预算与费用核对、密码和 TOTP MFA。管理员设备查询/撤销由账号鉴权执行，普通账号/设备凭证不能提升权限。管理 SPA 仅挂载允许的页面，旧聊天、setup、终端和浏览器等 API/页面均不能进入执行链。预算纳单位在 JSON 解析前保留整数精度。
+- 生命周期：Electron 默认启动新本地应用，随机本机凭证只留在主进程；配置/凭证交接与 lifecycle 控制不能通过 renderer API 代理访问。退出/休眠先关闭新任务入口，保存 running/awaiting-approval 为 interrupted，等待记忆写入器后限时 2 秒尝试最终同步，保留未确认 outbox。主进程准备超时停止 sidecar；唤醒按顺序重新验证身份，不恢复工具或 turn。连续休眠/唤醒只有最新唤醒能重新开放请求。已覆盖准备与退出排队时最终授权所需账号锁的竞态，以及 renderer 先断开 WS 时必须保存为 interrupted、仅显式取消才保存为 cancelled 的状态区分。
+- 默认入口：`octop run` 默认 cloud，`--role desktop`/`octop-local` 启动本机应用；只保留 run/cloud-init/local-config/health/version/completion。管理员初始化不装配模型网关或请求恢复任务。Docker 默认只安装 cloud extra，旧 mobile/cluster Compose 与全功能 FnOS 启动入口退役；FnOS 新包和发布流水线在 P7 处理。保留仍有引用的公共模块和旧领域回归源码，移除仅验证退役入口的测试。执行类旧依赖移至 `legacy-tests` 开发 dependency group，不提供第三种产品模式。
+- 语言与时区：新 UI/错误支持 zh/en，保存 UI 语言偏好并发送 Accept-Language；CLI 从终端 locale 读取本地化文案，不访问旧管理数据库。桌面时间来自已验证的云端时区。新初始化、健康检查、各角色 OpenAPI/Scalar 和首次启动说明见 [docs/product-applications.md](docs/product-applications.md)。
+- 后端相关专项：在 P5 候选 wheel（Harness 1.0.12 / Memory 1.0.6）环境下，`UV_NO_SYNC=1 uv run pytest tests/integration/test_product_applications.py tests/integration/test_independent_applications.py tests/integration/test_cloud_identity.py tests/integration/test_platform_resources.py tests/integration/test_platform_sync.py tests/unit/sync tests/unit/i18n -q -x --tb=short`，SQLite + 独立 PostgreSQL 17：**229 passed**。包括真实 Harness、审批/取消、强制终止 ASGI 子进程后重启不重放工具、响应丢失、未确认同步保留、设备/账号隔离、文件历史附件和资源安装。
+- CLI/部署/i18n 专项：`UV_NO_SYNC=1 uv run pytest tests/unit/test_cli_main.py tests/unit/test_application_launch.py tests/unit/test_docker_entrypoint.py tests/unit/test_cloud_deployment.py tests/unit/cli/test_registry.py tests/unit/cli/test_version_cmd.py tests/unit/cli/test_completion_cmd.py tests/unit/i18n -q -x --tb=short`：**124 passed**。Ruff check/format check、mypy（742 个源文件）通过；Compose config、相关 shell 语法、`uv lock --check`、`git diff --check` 通过。
+- 前端：`npx tsc -b`、`npm run lint`（0 errors，75 条原有 warnings）、`make build-frontend` 及最终 `npm run build` 通过；`npm test -- src/api/product/client.test.ts src/pages/Product/Workspace.test.tsx src/pages/Product/ProductApp.test.tsx`：**10 passed**。Node 24.18.0 / pnpm 12.15.0 下 Electron typecheck/build 及会话、生命周期、代理/relay 相关 **32 个用例**通过；最终只运行相关测试，未重跑无关 Electron 用例。
+- 真实浏览器：Chrome headless 运行实际云端和构建产物，验证密码登录、用户创建、供应商/逻辑模型配置、Agent 与 skill 发布、精确额度、MFA 启用/恢复码登录及角色隔离，无付费模型调用。修复 MFA 变更后返回登录时短暂表单被加载状态重置的竞态。仅安装 cloud extra 的全新 frozen 隔离环境也验证初始化/登录、管理页、CLI、健康和文档，确认未安装/导入四个执行库、LangChain 或旧编排。
+- 测试范围：遵循用户本轮补充要求，仅运行实际改动及直接依赖相关用例，未执行包含无关旧功能用例的 `make all` 全套 testcase。安装器、原生 OS keychain、各平台真实休眠事件、镜像/Chart 发布矩阵与完整桌面全流程留给 P7，未宣称本轮完成。
+- 依赖门槛：本轮 `uv.lock` 因 extras 退役及开发依赖分组重新生成，但 Harness/Memory 正式版本仍锁定 P4；未发布两个运行库，也未提交/推送。运行库候选包仍可用，P5 发布材料中的 Octop 依赖补丁基于 P5，应在正式发布时按 P6 当前结构重新生成并更新 lock。P7 未开始。
 
 ### P7：集成验收、打包与文档收尾
 
@@ -392,13 +406,13 @@ P5 实施记录（2026-11-20，候选包验收完成，发布待执行）：
 
 ## 10. 验证要求
 
-业务实现阶段默认交付门槛为 `make all`。根据改动增加有意义的验证，不为纯文档变更或实现镜像编写测试。
+按用户 2026-11-20 的补充要求，最终 testcase 只运行实际改动及直接依赖相关的用例；不要求为本轮改动运行无关旧功能用例或 `make all` 的全套测试。格式化、lint、typecheck 及相关专项仍须通过并记录，按改动选择有意义的验证，不为纯文档变更或实现镜像编写测试。
 
 | 改动 | 必须执行的验证 |
 | --- | --- |
-| 后端 | `make all`；新应用建立独立单元与集成测试，专项用例使用 `uv run pytest <实际测试路径> -q`，禁止 bare pytest |
+| 后端 | 格式化、lint、typecheck 与相关专项；新应用建立独立单元与集成测试，专项用例使用 `uv run pytest <实际测试路径> -q`，禁止 bare pytest |
 | Dashboard | 在 `dashboard/` 执行 `npx tsc -b`、`npm run lint`、相关 `npm test -- <实际测试路径>`；运行 `make build-frontend` 生成静态产物 |
-| Electron | 在 `desktop/src/` 执行 `pnpm typecheck`、`pnpm test`、`pnpm build`，使用该目录声明的 Node/pnpm 环境 |
+| Electron | 在 `desktop/src/` 执行 `pnpm typecheck`、相关 `pnpm test` 用例、`pnpm build`，使用该目录声明的 Node/pnpm 环境 |
 | 后端与前端文案 | `uv run pytest tests/unit/i18n -q`，保持 zh/en 及错误码对应 |
 | API | 检查角色各自的 OpenAPI 路由集合、权限与响应模型，并查看 `/api/docs` 可读性 |
 | 应用边界 | 在独立进程验证云端不导入本地执行器，两端均不依赖旧服务装配；云端在仅安装云端依赖的环境中能够初始化和启动 |

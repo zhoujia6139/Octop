@@ -81,6 +81,8 @@ export const IPC_CHANNELS = {
   cloudBind: "octop:cloud:bind",
   cloudRenew: "octop:cloud:renew",
   cloudLogout: "octop:cloud:logout",
+  cloudConfig: "octop:cloud:config",
+  cloudConfigure: "octop:cloud:configure",
   cloudCurrent: "octop:cloud:current",
   sessionRegister: "octop:session:register",
   sessionRenew: "octop:session:renew",

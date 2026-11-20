@@ -1,6 +1,6 @@
 # 云端账号与桌面设备授权（P2）
 
-P2 在独立云端和本地应用上提供账号密码、TOTP MFA（含恢复码）、单设备绑定、撤销与账号数据隔离。首期登录方式已与用户确认，不迁入 SSO、LDAP 或 Passkey。产品登录页面与默认入口的切换在 P6，模型网关已在 P3 接入（见 [platform-models.md](platform-models.md)），P4 已接入资源 outbox 与版本分配（见 [platform-resources.md](platform-resources.md)），聊天/文件/记忆同步传输在 P5。
+P2 在独立云端和本地应用上提供账号密码、TOTP MFA（含恢复码）、单设备绑定、撤销与账号数据隔离。首期登录方式已与用户确认，不迁入 SSO、LDAP 或 Passkey。P6 已接入产品登录/管理页面并切换默认入口（见 [产品入口与生命周期](product-applications.md)），模型网关已在 P3 接入（见 [platform-models.md](platform-models.md)），P4 已接入资源 outbox 与版本分配（见 [platform-resources.md](platform-resources.md)），聊天/文件/记忆同步传输在 P5。
 
 ## 启动与初始化
 
@@ -19,8 +19,8 @@ uv run --no-dev --extra cloud octop-cloud --home /path/to/cloud --port 8088
 
 ```bash
 OCTOP_CLOUD_URL=https://cloud.example uv run --no-dev --extra local-runtime octop-local
-# Electron 调试入口（在 desktop/src 下，已有对应开发运行时）：
-OCTOP_CLOUD_URL=https://cloud.example pnpm dev -- --local-runtime
+# Electron 默认产品入口（在 desktop/src 下，已有对应开发运行时）：
+OCTOP_CLOUD_URL=https://cloud.example pnpm dev
 ```
 
 Electron 为每次 sidecar 启动生成独立本机 API token。云端账号会话、云端设备授权与该本机 token 分别验证，不能互换。
@@ -57,7 +57,7 @@ TOTP 秘钥复用现有 Fernet 密封能力；恢复码复用现有生成、规�
 
 ## 桌面凭证与账号目录
 
-`window.octopDesktop.cloud` 提供 `login(username, password)`、`verifyMfa(code)`、`bind(replace)`、`renew()`、`logout()` 和 `current()`。前两步只返回 `mfa_required` 或 `ready_to_bind`，绑定成功返回公开身份；renderer 不取得账号 token、设备长期凭证或设备 access token。管理 UI 的 MFA 设置和用户管理界面在 P6 接入上述 HTTP 合同。
+`window.octopDesktop.cloud` 提供 `login(username, password)`、`verifyMfa(code)`、`bind(replace)`、`renew()`、`logout()` 和 `current()`。前两步只返回 `mfa_required` 或 `ready_to_bind`，绑定成功返回公开身份；renderer 不取得账号 token、设备长期凭证或设备 access token。P6 的管理 UI 已接入 MFA 设置和用户管理；另有 `configuration()` / `configure(origin)` 支持首次配置，退出/休眠由主进程调用本地 lifecycle。
 
 Electron 主进程的 `cloud-session/desktop-device.json` 使用现有 `DeviceCredentialStore` 和系统凭证存储加密；无可用 keychain 时只存当前进程内存，重启后重新登录。云端 origin 也保存在密文中，修改服务地址不会把旧服务器凭证发送到新服务器。主进程自动在短期授权过期前续期，临时网络失败保留本地数据并重试。主进程退出时停止续期。
 
@@ -73,7 +73,7 @@ $OCTOP_HOME/local/accounts/<sha256(cloud_origin:cloud_id:user_id)>/
 
 切换或退出会取消当前任务、关闭 Harness 和数据库，保留原账号文件。已有 WS 继续指向已关闭的旧运行实例，不能转向新账号。`LocalAccounts.device_access(expected_identity=...)` 要求后台工作携带原来的账号/绑定身份，并在线复核；旧账号任务不能取得新账号凭证。实际 outbox 表、重试和上传在 P5 按此归属接入。
 
-云端不可达时，已打开的账号数据仍可本地查看。应用冷启动后首次选择账号需要完成在线设备验证，离线冷启动体验在后续数据恢复/产品阶段处理。没有网关授权时不提供生产模型直连。
+云端不可达时，已打开的账号数据仍可本地查看。应用冷启动后首次选择账号需要完成在线设备验证，本轮不提供未验证设备的离线冷启动入口。没有网关授权时不提供生产模型直连。
 
 本机 `/api/cloud/*` 控制面只供主进程使用，renderer 通过受校验的 IPC 调用，普通 HTTP 中继拒绝这些路径（含编码形式）。HTTP/WS 中继只向 sidecar 注入本机 token；凭证不放在 URL 中。
 

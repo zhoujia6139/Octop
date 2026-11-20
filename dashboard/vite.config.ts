@@ -2,7 +2,6 @@ import { webcrypto } from "node:crypto";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
-import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 
 import { monacoSameOrigin } from "./vite/monaco.ts";
@@ -38,9 +37,6 @@ export default defineConfig(({ mode }) => {
 
   const isProd = mode === "production";
   const analyze = env.ANALYZE === "true";
-  // BUILD_FAST=1：本地看效果专用。跳过压缩与 PWA 预缓存，并放开 Rollup 并发，
-  // 产物功能一致、体积更大，只用于 dev/8088 预览，发布前请跑标准 build。
-  const fast = process.env.BUILD_FAST === "1";
   // Dev server defaults to Vite's :5173. Override with VITE_DEV_PORT (e.g. 80
   // for LAN / same-origin setups). Must stay in sync with server.hmr.clientPort.
   const devServerPort = Number(process.env.VITE_DEV_PORT || 5173);
@@ -154,112 +150,6 @@ export default defineConfig(({ mode }) => {
       suppressViteDisconnectReload(),
       react(),
       svgr(),
-      VitePWA({
-        // fast 模式不生成 Service Worker，省掉 workbox 扫描与打包。
-        disable: fast,
-        // prompt: new SW stays in waiting until the user accepts via
-        // PwaUpdatePrompt → applyUpdate() → SKIP_WAITING. Avoid autoUpdate
-        // skipWaiting + page reload loops (especially Safari/WebKit).
-        registerType: "prompt",
-        // SW registration is handled in sw-register.ts for full control.
-        injectRegister: false,
-        // Use public/manifest.json directly instead of auto-generating one.
-        manifest: false,
-        // Include the offline fallback in the SW precache.
-        includeAssets: [
-          "offline.html",
-          "logo_vertical_dark.svg",
-          "logo_vertical_white.svg",
-          "logo_horizontal_dark.png",
-          "logo_horizontal_white.png",
-          "pwa-192.png",
-          "pwa-512.png",
-          "apple-touch-icon.png",
-        ],
-        workbox: {
-          // Notification clicks are handled here. The production worker must
-          // not skipWaiting; notify-sw.js only does that when it is the worker.
-          importScripts: ["notify-sw.js"],
-          // Precache hashed entry + vendor chunks. Do NOT precache index.html:
-          // Cache-First on the shell pins a stale HTML that points at deleted
-          // hashes after deploy (white screen until a hard refresh).
-          globPatterns: [
-            "assets/index.*.js",
-            "assets/vendor-*.js",
-            "assets/*.{css,woff2}",
-          ],
-          // vendor-antd (incl. the ColorPicker color engine) exceeds the
-          // 2 MiB workbox default; raise the precache limit so it stays
-          // offline-available instead of silently skipped.
-          maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
-          // FastAPI already serves the SPA fallback. A Workbox NavigationRoute
-          // would Cache-First the old shell; use NetworkFirst below instead.
-          navigateFallback: null,
-          // Take control on first activation so Chrome can fire beforeinstallprompt.
-          clientsClaim: true,
-          // Do not activate updated workers until the user confirms (SKIP_WAITING).
-          skipWaiting: false,
-          runtimeCaching: [
-            {
-              // Always revalidate the HTML shell so a new deploy is picked up
-              // without a hard refresh. Last good copy is kept for offline.
-              urlPattern: ({ request }) => request.mode === "navigate",
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "html-shell",
-                networkTimeoutSeconds: 3,
-                expiration: {
-                  maxEntries: 8,
-                  maxAgeSeconds: 24 * 60 * 60,
-                },
-              },
-            },
-            {
-              // Vite emits content-hashed assets (assets/name.[hash].js).
-              // CacheFirst is correct: a new deploy uses new URLs.
-              // NetworkFirst would prefer a post-deploy 404 over the cache.
-              urlPattern: /\/assets\/.*\.(js|css)$/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "static-chunks",
-                expiration: {
-                  maxEntries: 200,
-                  maxAgeSeconds: 30 * 24 * 60 * 60,
-                },
-              },
-            },
-            {
-              // 3D model and animation files (GLB / GIF) — large, cache up to 7 days.
-              urlPattern: /\.(glb|gltf|gif)$/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "3d-assets",
-                expiration: { maxEntries: 60, maxAgeSeconds: 7 * 24 * 60 * 60 },
-              },
-            },
-            {
-              // Read-only API calls (chat history, files, config).
-              // NetworkFirst ensures fresh data when online; cache used offline.
-              urlPattern: /^\/api\/(chats|agent\/files|agent\/memory)/,
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "api-readonly",
-                networkTimeoutSeconds: 5,
-                expiration: { maxEntries: 50, maxAgeSeconds: 5 * 60 },
-              },
-            },
-            {
-              // Web fonts (woff2) — essentially permanent.
-              urlPattern: /\.woff2?$/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "fonts",
-                expiration: { maxAgeSeconds: 365 * 24 * 60 * 60 },
-              },
-            },
-          ],
-        },
-      }),
       ...extraPlugins,
     ],
     css: {

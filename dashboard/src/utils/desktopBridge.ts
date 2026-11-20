@@ -71,6 +71,7 @@ export interface DesktopSessionBridge {
 }
 
 export interface OctopDesktopBridge {
+  cloud?: import("../api/product/contracts").CloudBridge;
   session?: DesktopSessionBridge;
   /**
    * Where to dial WebSockets (§5.2). Absent on an older shell, and null when the

@@ -92,7 +92,7 @@ Harness 每次 HTTP 模型调用由本机中继分配独立 request_id，关联�
 
 云端同名 `/api/usage/*` 查询接受账号或设备授权，默认只看本人。管理员使用账号会话显式指定 `user_id` 才能查询他人。requests 可见失败、释放和待核对状态；summary 只聚合已结算的 attempt，按逻辑模型和币种分组，支持 `since`（含）与 `until`（不含）的 Unix 时间范围。
 
-P3 不改默认产品入口。Electron 调试仍使用 `--local-runtime`；登录、模型管理与费用的产品页面在 P6 接入。P4 已接入资源发布和安装，见 [platform-resources.md](platform-resources.md)；聊天/文件/记忆同步仍属于 P5。
+P3 的网关合同保持不变。P6 已切换默认产品入口并接入登录、模型管理和费用页面，见 [产品说明](product-applications.md)。资源发布和安装见 [platform-resources.md](platform-resources.md)；聊天/文件/记忆同步见 [platform-sync.md](platform-sync.md)。
 
 ## 验证
 

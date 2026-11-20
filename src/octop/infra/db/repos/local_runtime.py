@@ -96,6 +96,14 @@ class LocalTurnRepo:
                 (status, finished, turn_id),
             )
 
+    def latest(self, thread_id: str) -> dict[str, str] | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT turn_id,status FROM local_turns WHERE thread_id=? ORDER BY id DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def recover_interrupted(self) -> None:
         with self._db.transaction() as conn:
             conn.execute(

@@ -61,9 +61,9 @@ echo Usage: start.bat [--home DIR] [--host HOST] [--port PORT] [octop run args..
 echo.
 echo Defaults:
 echo   OCTOP_HOME / --home   %%ROOT%%\data
-echo   bind_host / port      config.json ^(127.0.0.1:8088 when unset^)
+echo   bind_host / port      local\config.json ^(loopback, random port when unset^)
 echo.
-echo --host and --port override config.json and are saved back to it.
+echo --host and --port are process overrides. Use Octop Desktop for the UI.
 exit /b 0
 
 :run
@@ -98,5 +98,5 @@ if defined HOST if defined PORT echo [octop] http://%HOST%:%PORT%
 if defined HOST if not defined PORT echo [octop] host=%HOST% ^(port from config.json^)
 if not defined HOST if defined PORT echo [octop] port=%PORT% ^(host from config.json^)
 if not defined HOST if not defined PORT echo [octop] bind from config.json
-"%PY%" "%ROOT%\launch.py" run !BIND_ARGS! %EXTRA%
+"%PY%" "%ROOT%\launch.py" run --role desktop !BIND_ARGS! %EXTRA%
 exit /b %ERRORLEVEL%

@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from starlette.background import BackgroundTask
 
-from octop.api.applications.common import bounded_json_body, configure_http
+from octop.api.applications.common import bounded_json_body, configure_http, configure_product
 from octop.api.applications.local_resources import router as resources_router
 from octop.api.applications.local_sync import router as sync_router
 from octop.application_config import LocalSettings
@@ -24,6 +24,7 @@ from octop.infra.applications.contracts import (
     LocalAgentInput,
     LocalAgentView,
     PublicId,
+    ThreadState,
     ThreadView,
 )
 from octop.infra.applications.local_accounts import LocalAccounts
@@ -49,6 +50,11 @@ logger = logging.getLogger(__name__)
 
 class CloudConfig(BaseModel):
     cloud_url: str | None
+
+
+class CloudOrigin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cloud_url: str = Field(min_length=1, max_length=2048)
 
 
 class AuxiliaryModelInput(ModelInput):
@@ -114,6 +120,11 @@ def create_local_app(
     app.state.accounts = accounts
     app.state.local = accounts.runtime
     configure_http(app, api_docs=settings.enable_api_docs)
+    configure_product(
+        app,
+        "local",
+        lambda: accounts.identity.timezone if accounts.identity else settings.default_timezone,
+    )
 
     def authenticated(value: str) -> bool:
         return hmac.compare_digest(
@@ -165,7 +176,20 @@ def create_local_app(
         summary="Get the configured cloud origin for the desktop main process",
     )
     async def cloud_config() -> CloudConfig:
-        return CloudConfig(cloud_url=settings.cloud_url)
+        return CloudConfig(cloud_url=accounts.settings.cloud_url)
+
+    @app.put(
+        "/api/cloud/config",
+        response_model=CloudConfig,
+        tags=["auth"],
+        summary="Configure a trusted cloud origin before selecting an account",
+    )
+    async def configure_cloud(body: CloudOrigin) -> CloudConfig:
+        try:
+            await accounts.configure_cloud(body.cloud_url)
+        except ValueError as exc:
+            raise OctopError.localized(ErrorCode.SLASH_BAD_ARGS) from exc
+        return CloudConfig(cloud_url=accounts.settings.cloud_url)
 
     @app.put(
         "/api/cloud/session",
@@ -200,6 +224,18 @@ def create_local_app(
     )
     async def detach_cloud() -> Response:
         await accounts.detach()
+        app.state.local = None
+        return Response(status_code=204)
+
+    @app.post(
+        "/api/lifecycle/prepare",
+        status_code=204,
+        tags=["health"],
+        summary="Stop local work, persist interruptions and attempt a bounded final backup",
+        description="Electron main-process only. Detaches the account without deleting outbox or revoking its renewable device credential. Wake requires renewed cloud validation; no task is replayed.",
+    )
+    async def prepare_shutdown() -> Response:
+        await accounts.prepare_shutdown()
         app.state.local = None
         return Response(status_code=204)
 
@@ -344,8 +380,18 @@ def create_local_app(
     async def create_thread(agent_id: PublicId) -> ThreadView:
         return await accounts.require_runtime().create_thread(agent_id)
 
+    @app.get(
+        "/api/agents/{agent_id}/threads/{thread_id}/state",
+        response_model=ThreadState,
+        tags=["chat"],
+        summary="Read turn and pending approval state without resuming execution",
+    )
+    async def thread_state(agent_id: PublicId, thread_id: PublicId) -> ThreadState:
+        return await accounts.require_runtime().thread_state(agent_id, thread_id)
+
     @app.websocket("/api/agents/{agent_id}/threads/{thread_id}/ws")
     async def chat(websocket: WebSocket, agent_id: PublicId, thread_id: PublicId) -> None:
+        locale = resolve_request_locale(websocket)
         authorization = websocket.headers.get("authorization", "")
         if not authenticated(authorization):
             await websocket.close(code=1008)
@@ -383,14 +429,14 @@ def create_local_app(
                     async for event in events:
                         await send(event.model_dump(mode="json", fallback=str))
             except OctopError as error:
-                await send({"type": "error", **error.to_envelope()})
+                await send({"type": "error", **error.to_envelope(locale=locale)})
             except WebSocketDisconnect:
                 return
             except Exception:
                 logger.exception("local turn failed")
                 internal_error = OctopError.localized(ErrorCode.INTERNAL_ERROR)
                 with suppress(WebSocketDisconnect, RuntimeError):
-                    await send({"type": "error", **internal_error.to_envelope()})
+                    await send({"type": "error", **internal_error.to_envelope(locale=locale)})
 
         try:
             while True:
@@ -398,14 +444,14 @@ def create_local_app(
                     command = TurnCommand.model_validate(await websocket.receive_json())
                 except (ValidationError, ValueError):
                     error = OctopError.localized(ErrorCode.SLASH_BAD_ARGS)
-                    await send({"type": "error", **error.to_envelope()})
+                    await send({"type": "error", **error.to_envelope(locale=locale)})
                     continue
                 if command.type == "cancel":
                     if terminal := await runtime.cancel(thread_id):
                         await send(terminal.model_dump(mode="json"))
                 elif active is not None and not active.done():
                     error = OctopError.localized(ErrorCode.THREAD_TURN_ACTIVE)
-                    await send({"type": "error", **error.to_envelope()})
+                    await send({"type": "error", **error.to_envelope(locale=locale)})
                 else:
                     active = asyncio.create_task(run(command))
         except WebSocketDisconnect:

@@ -9,7 +9,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
-from octop.api.applications.common import bounded_json_body, configure_http
+from octop.api.applications.common import bounded_json_body, configure_http, configure_product
 from octop.api.applications.identity import router as identity_router
 from octop.api.applications.models import router as models_router
 from octop.api.applications.resources import router as resources_router
@@ -104,4 +104,5 @@ def create_cloud_app(
             role="cloud", ok=services.db is not None, schema_version=services.schema_version
         )
 
+    configure_product(app, "cloud", lambda: settings.default_timezone)
     return app

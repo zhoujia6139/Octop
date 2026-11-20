@@ -12,6 +12,7 @@ from octop.application_config import LocalSettings
 from octop.infra.applications.contracts import (
     LocalAgentInput,
     LocalAgentView,
+    ThreadState,
     ThreadView,
     TurnEvent,
     TurnStatus,
@@ -60,9 +61,13 @@ class LocalApplication:
         self.model_turns: dict[str, tuple[str, str]] = {}
         self._agents: dict[str, HarnessAgent] = {}
         self._agent_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
         self._active: dict[str, asyncio.Task[Any]] = {}
+        self._user_cancelled: set[str] = set()
         self._pending: dict[str, tuple[str, int]] = {}
+        self._approvals: dict[str, dict[str, Any]] = {}
         self._closing = False
+        self._quiescing = False
 
     def _open(self) -> tuple[LocalServices, int]:
         db = SqlitePool(self.settings.home / "local.db")
@@ -151,6 +156,8 @@ class LocalApplication:
 
     async def _agent(self, agent_id: str) -> HarnessAgent:
         async with self._agent_lock:
+            if self._quiescing or self._closing:
+                raise OctopError.localized(ErrorCode.LOCAL_RUNTIME_PAUSED)
             row = await asyncio.get_running_loop().run_in_executor(
                 None, self._storage().agents.get, agent_id
             )
@@ -221,7 +228,7 @@ class LocalApplication:
             row = await durable(repo.get, resource_id)
             assert row is not None and row["agent_id"] is not None
             agent_id = row["agent_id"]
-            if self.agent_busy(agent_id):
+            if self.agent_busy(agent_id) or self._quiescing:
                 return
             # A fresh immutable directory means incomplete downloads never
             # overwrite an installed skill tree or add stale files to a version.
@@ -317,6 +324,19 @@ class LocalApplication:
         )
         return ThreadView(thread_id=thread_id, agent_id=agent_id)
 
+    async def thread_state(self, agent_id: str, thread_id: str) -> ThreadState:
+        storage = self._storage()
+        if not await asyncio.get_running_loop().run_in_executor(
+            None, storage.threads.belongs_to, thread_id, agent_id
+        ):
+            raise OctopError.localized(ErrorCode.NOT_FOUND)
+        latest = await asyncio.get_running_loop().run_in_executor(
+            None, storage.turns.latest, thread_id
+        )
+        return ThreadState.model_validate(
+            {**(latest or {}), "approval": self._approvals.get(thread_id)}
+        )
+
     async def validate_model_context(self, agent_id: str, thread_id: str, turn_id: str) -> None:
         storage = self._storage()
         loop = asyncio.get_running_loop()
@@ -327,10 +347,12 @@ class LocalApplication:
 
     async def cancel(self, thread_id: str) -> TurnEvent | None:
         if task := self._active.get(thread_id):
+            self._user_cancelled.add(thread_id)
             for agent in self._agents.values():
                 agent.cancel(thread_id)
             task.cancel()
         elif pending := self._pending.pop(thread_id, None):
+            self._approvals.pop(thread_id, None)
             turn_id, sequence = pending
             agent_id = self._turn_agents.pop(thread_id, None)
             if self.sync:
@@ -361,6 +383,8 @@ class LocalApplication:
         decisions: list[dict[str, Any]] | None = None,
         attachment_ids: list[str] | None = None,
     ) -> AsyncGenerator[TurnEvent, None]:
+        if self._quiescing or self._closing:
+            raise OctopError.localized(ErrorCode.LOCAL_RUNTIME_PAUSED)
         if thread_id in self._active:
             raise OctopError.localized(ErrorCode.THREAD_TURN_ACTIVE)
         if self.sync:
@@ -405,6 +429,7 @@ class LocalApplication:
                 if pending is None:
                     raise OctopError.localized(ErrorCode.LOCAL_APPROVAL_NOT_PENDING)
                 turn_id, sequence = pending
+                self._approvals.pop(thread_id, None)
                 source = agent.resume_hitl(thread_id, decisions)
                 if self.sync:
                     projection = await self.sync.projection(agent_id, thread_id, turn_id)
@@ -458,11 +483,16 @@ class LocalApplication:
                         kind = str(chunk.get("type", "state_update"))
                         if kind == "hitl_required":
                             status = TurnStatus.AWAITING_APPROVAL
+                            self._approvals[thread_id] = chunk.get("request", {})
                         if projection:
                             await projection.capture(chunk)
                         yield event(kind, chunk)
         except asyncio.CancelledError:
-            status = TurnStatus.INTERRUPTED if self._closing else TurnStatus.CANCELLED
+            status = (
+                TurnStatus.CANCELLED
+                if thread_id in self._user_cancelled and not self._closing and not self._quiescing
+                else TurnStatus.INTERRUPTED
+            )
         except GeneratorExit:
             status = TurnStatus.INTERRUPTED
             raise
@@ -489,6 +519,7 @@ class LocalApplication:
                         )
                     )
             self._active.pop(thread_id, None)
+            self._user_cancelled.discard(thread_id)
             self.model_turns.pop(thread_id, None)
             if status != TurnStatus.AWAITING_APPROVAL:
                 self._turn_agents.pop(thread_id, None)
@@ -501,16 +532,64 @@ class LocalApplication:
             self._pending[thread_id] = (turn_id, sequence)
         yield terminal
 
-    async def close(self, *, close_model_factory: bool = True) -> None:
-        self._closing = True
-        if self.sync:
-            await self.sync.close()
-        if self.resources:
-            await self.resources.close()
+    async def quiesce(self) -> None:
+        """Stop admission and persist interruptions without resuming pending tools."""
+        self._quiescing = True
         tasks = list(self._active.values())
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        for thread_id, (turn_id, _) in list(self._pending.items()):
+            agent_id = self._turn_agents.get(thread_id)
+            if self.sync and agent_id:
+                projection = await self.sync.projection(agent_id, thread_id, turn_id)
+                await projection.load()
+                await projection.finish("interrupted")
+            elif self.services:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self.services.turns.set_status, turn_id, "interrupted"
+                )
+        self._pending.clear()
+        self._approvals.clear()
+        self._turn_agents.clear()
+
+    async def prepare_shutdown(self) -> None:
+        """Persist first, then make one bounded best-effort backup attempt."""
+        async with self._lifecycle_lock:
+            if self.services is not None and not self._closing:
+                await self._prepare_shutdown()
+
+    async def _prepare_shutdown(self) -> None:
+        await self.quiesce()
+        # Close memory writers before taking the final logical snapshot. No new
+        # Agent may be created while quiescing; the offline workspace facade
+        # remains available to synchronization.
+        async with self._agent_lock:
+            agents, self._agents = self._agents, {}
+            await asyncio.gather(*(self._close_agent(a) for a in agents.values()))
+        try:
+            async with asyncio.timeout(2):
+                if self.resources:
+                    await self.resources.sync()
+                if self.sync:
+                    await self.sync.sync()
+        except (TimeoutError, OctopError, OSError, ValueError):
+            # Pending rows remain durable. An unacknowledged request is never
+            # marked synced merely because this grace period ended.
+            pass
+
+    async def close(self, *, close_model_factory: bool = True) -> None:
+        async with self._lifecycle_lock:
+            await self._close(close_model_factory=close_model_factory)
+
+    async def _close(self, *, close_model_factory: bool) -> None:
+        self._quiescing = True
+        if self.sync:
+            await self.sync.close()
+        if self.resources:
+            await self.resources.close()
+        await self.quiesce()
+        self._closing = True
         try:
             results = await asyncio.gather(
                 *(self._close_agent(agent) for agent in self._agents.values()),

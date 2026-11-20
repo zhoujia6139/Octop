@@ -84,6 +84,8 @@ class Projection:
     async def begin(self, text: str, attachments: list[Attachment], *, resume: bool) -> str:
         await self.load()
         self.thread.status = "running"
+        if not self.thread.title and text.strip():
+            self.thread.title = text.strip().splitlines()[0][:200]
         self.thread.updated_at = int(time.time())
         changes = [
             change(

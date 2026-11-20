@@ -44,6 +44,12 @@ class TurnStatus(StrEnum):
     FAILED = "failed"
 
 
+class ThreadState(BaseModel):
+    turn_id: PublicId | None = None
+    status: TurnStatus | None = None
+    approval: dict[str, Any] | None = None
+
+
 class TurnEvent(BaseModel):
     protocol_version: Literal[1] = 1
     turn_id: PublicId

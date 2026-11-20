@@ -1,196 +1,80 @@
-"""tests/unit/test_cli_main.py — basic help/import smoke test."""
+"""P6 product entry points replace the legacy all-in-one CLI."""
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
+import pytest
 from click.testing import CliRunner
 
 from octop.cli.main import cli
 
 
-def test_root_help_lists_groups() -> None:
-    runner = CliRunner()
-    result = runner.invoke(cli, ["--help"])
-    assert result.exit_code == 0
-    out = result.output
-    for grp in (
-        "service",
-        "user",
-        "agent",
-        "chat",
-        "channel",
-        "cron",
-        "provider",
-        "admin",
-        "bridge",
-    ):
-        assert grp in out
+def test_help_is_lazy_and_exposes_only_product_commands():
+    script = """
+import json, sys
+from click.testing import CliRunner
+from octop.cli.main import cli
+result = CliRunner().invoke(cli, ['--help'])
+assert result.exit_code == 0, result.output
+print(json.dumps({'help': result.output, 'modules': list(sys.modules)}))
+"""
+    response = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    result = json.loads(response.stdout)
+    for name in ("cloud-init", "local-config", "health", "run"):
+        assert name in result["help"]
+    assert not any(name.startswith("octop.cli.commands.") for name in result["modules"])
+    assert not any(
+        name.startswith(("octop.infra.server", "octop_gateway", "octop_harness"))
+        for name in result["modules"]
+    )
 
 
-def test_user_group_help() -> None:
-    runner = CliRunner()
-    result = runner.invoke(cli, ["user", "--help"])
-    assert result.exit_code == 0
-    for cmd in ("create", "list", "passwd", "role", "disable", "delete"):
-        assert cmd in result.output
-
-
-def test_agent_group_help() -> None:
-    runner = CliRunner()
-    result = runner.invoke(cli, ["agent", "--help"])
-    assert result.exit_code == 0
-    for cmd in ("create", "list", "start", "stop", "reload", "delete"):
-        assert cmd in result.output
-
-
-def test_admin_rotate_jwt_help() -> None:
-    runner = CliRunner()
-    result = runner.invoke(cli, ["admin", "rotate-jwt-secret", "--help"])
-    assert result.exit_code == 0
-
-
-def test_channel_group_lists_test_subcommand() -> None:
-    """Plan §13.6 requires ``channel test`` subcommand."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["channel", "--help"])
-    assert result.exit_code == 0
-    assert "test" in result.output
-
-
-def test_channel_test_help() -> None:
-    runner = CliRunner()
-    result = runner.invoke(cli, ["channel", "test", "--help"])
-    assert result.exit_code == 0
-    assert "--agent" in result.output
-
-
-def test_provider_group_lists_test_subcommand() -> None:
-    """Plan §13.6 requires ``provider test`` subcommand."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["provider", "--help"])
-    assert result.exit_code == 0
-    assert "test" in result.output
-
-
-def test_provider_test_help() -> None:
-    runner = CliRunner()
-    result = runner.invoke(cli, ["provider", "test", "--help"])
-    assert result.exit_code == 0
-
-
-def test_root_help_lists_global_options() -> None:
-    """Plan §13.1 mandates root-level --user / --agent / --json options."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["--help"])
-    assert result.exit_code == 0
-    out = result.output
-    for opt in ("--user", "--agent", "--json"):
-        assert opt in out
-
-
-def test_channel_list_uses_root_agent_fallback(monkeypatch) -> None:
-    """``--agent`` is no longer required on subcommands; the root option
-    (or OCTOP_AGENT env) supplies a fallback when not given inline."""
-    captured: dict[str, str] = {}
-
-    def _fake_resolve(*a, **k) -> int:
-        return 1
-
-    def _fake_list(agent_id, *, home=None):
-        captured["agent_id"] = agent_id
-        return []
-
-    import octop.cli.commands.channel as channel_cmd
-    from octop.cli.support import offline_ops as offline_mod
-
-    monkeypatch.setattr(channel_cmd, "resolve_cli_acting_user_id", _fake_resolve)
-    monkeypatch.setattr(offline_mod, "list_channels_offline", _fake_list)
-
-    runner = CliRunner()
-    # No --agent on the subcommand; root --agent supplies it.
-    result = runner.invoke(cli, ["--agent", "AID-FROM-ROOT", "channel", "list"])
-    assert result.exit_code == 0, result.output
-    assert captured["agent_id"] == "AID-FROM-ROOT"
-
-
-def test_channel_list_without_agent_errors() -> None:
-    """When neither root --agent nor subcommand --agent is set, exit 2."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["channel", "list"])
+@pytest.mark.parametrize(
+    "name",
+    ["agent", "chats", "channel", "cron", "provider", "bridge", "acp", "init", "service", "memory"],
+)
+def test_retired_commands_cannot_be_invoked(name):
+    result = CliRunner().invoke(cli, [name, "--help"])
     assert result.exit_code == 2
-    assert "agent" in result.output.lower()
+    assert "No such command" in result.output
 
 
-def test_channel_list_json_emits_dump(monkeypatch) -> None:
-    """Plan §13.1: root ``--json`` flips list-style output to JSON.
+@pytest.mark.parametrize(
+    "args,role", [([], "cloud"), (["--role", "cloud"], "cloud"), (["--role", "desktop"], "local")]
+)
+def test_run_selects_new_factory_and_keeps_port_zero(tmp_path, monkeypatch, args, role):
+    from octop import launch
 
-    Asserts the rendered output is valid JSON (no Rich box characters)
-    and round-trips to the original payload.
-    """
-    import json as _json
+    seen = []
 
-    payload = [{"id": "01", "kind": "feishu", "enabled": True}]
+    async def run(selected, **kwargs):
+        seen.append((selected, kwargs))
 
-    def _fake_resolve(*a, **k) -> int:
-        return 1
-
-    def _fake_list(agent_id, *, home=None):
-        return payload
-
-    import octop.cli.commands.channel as channel_cmd
-    from octop.cli.support import offline_ops as offline_mod
-
-    monkeypatch.setattr(channel_cmd, "resolve_cli_acting_user_id", _fake_resolve)
-    monkeypatch.setattr(offline_mod, "list_channels_offline", _fake_list)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["--json", "--agent", "AID", "channel", "list"])
+    monkeypatch.setattr(launch, "run_application", run)
+    result = CliRunner().invoke(cli, ["run", *args, "--home", str(tmp_path), "--port", "0"])
     assert result.exit_code == 0, result.output
-    # Pure JSON output — no Rich table borders
-    assert "─" not in result.output
-    assert "│" not in result.output
-    parsed = _json.loads(result.output.strip())
-    assert parsed == payload
+    assert seen[0][0] == role
+    assert seen[0][1]["port"] == 0
+    assert seen[0][1]["home"] == tmp_path
+    assert not (tmp_path / "config.json").exists()
 
 
-def test_user_list_json_emits_dump(monkeypatch) -> None:
-    """``user list`` is a Rich-rendered command outside agent scope; the
-    same --json contract applies."""
-    import json as _json
-
-    payload = [{"id": 1, "username": "alice", "role": "user", "disabled": False}]
-
-    def _fake_list(*, home=None):
-        return payload
-
-    from octop.cli.support import offline_ops as offline_mod
-
-    monkeypatch.setattr(offline_mod, "list_users_offline", _fake_list)
-
+def test_local_config_validates_origin_without_persisting_credentials(tmp_path):
     runner = CliRunner()
-    result = runner.invoke(cli, ["--json", "user", "list"])
+    assert (
+        runner.invoke(
+            cli, ["local-config", "--home", str(tmp_path), "--cloud-url", "http://untrusted.test"]
+        ).exit_code
+        != 0
+    )
+    assert not (tmp_path / "config.json").exists()
+    result = runner.invoke(
+        cli, ["local-config", "--home", str(tmp_path), "--cloud-url", "https://cloud.test"]
+    )
     assert result.exit_code == 0, result.output
-    assert "│" not in result.output
-    parsed = _json.loads(result.output.strip())
-    assert parsed == payload
-
-
-def test_root_help_does_not_import_subcommand_modules() -> None:
-    """`octop --help` must not import individual command modules eagerly."""
-    import importlib
-    import sys
-
-    for mod in list(sys.modules):
-        if mod.startswith("octop.cli.commands."):
-            del sys.modules[mod]
-    importlib.invalidate_caches()
-    # Force re-import of main itself so the lazy group is fresh.
-    if "octop.cli.main" in sys.modules:
-        del sys.modules["octop.cli.main"]
-    from octop.cli.main import cli as fresh_cli
-
-    runner = CliRunner()
-    result = runner.invoke(fresh_cli, ["--help"])
-    assert result.exit_code == 0
-
-    leaked = [m for m in sys.modules if m.startswith("octop.cli.commands.")]
-    assert leaked == [], f"Lazy loader leaked imports: {leaked}"
+    assert json.loads((tmp_path / "config.json").read_text()) == {"cloud_url": "https://cloud.test"}

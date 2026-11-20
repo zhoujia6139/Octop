@@ -578,7 +578,8 @@
     "WEBAUTHN_LOGIN_DISABLED": "登录页的通行密钥登录已关闭。管理员可在「应用设置 → 通行密钥」中开启。",
     "DEVICE_REVOKED": "设备授权已过期或撤销，请重新登录并绑定设备。",
     "DEVICE_BINDING_EXISTS": "账号已绑定执行设备，请确认替换以撤销原设备。",
-    "CLOUD_UNAVAILABLE": "云端服务暂时不可用，请稍后重试。"
+    "CLOUD_UNAVAILABLE": "云端服务暂时不可用，请稍后重试。",
+    "LOCAL_RUNTIME_PAUSED": "本地运行已暂停，请等待重新验证云端登录。"
   },
   "desktop": {
     "install_log_deps": "正在安装 Python 依赖…",
@@ -1253,5 +1254,19 @@
     "summary_dry_run": "将迁移 {migrated} 项，跳过 {skipped} 项，失败 {failed} 项。",
     "dry_run_hint": "预演模式：没有写入任何内容。去掉 --dry-run 后再运行即可执行迁移。",
     "restart_hint": "如果 `octop run` 正在运行，请重启以加载迁移的模型供应商和通道。"
+  },
+  "product_cli": {
+    "help": "Octop 云端管理和桌面运行命令。",
+    "cloud": "运行独立云端管理应用。",
+    "local": "在本机回环地址运行桌面后端。",
+    "cloud_init": "通过交互式密码创建第一个云端管理员。",
+    "run": "启动云端管理（默认），或启动已鉴权的桌面后端。",
+    "local_config": "在打开桌面应用前设置可信云端地址。",
+    "health": "校验应用就绪状态和角色。",
+    "version": "查看已安装的版本。",
+    "completion": "Shell 补全工具。",
+    "if_empty": "已有账号时不修改账号数据。",
+    "tls_pair": "必须同时提供 --ssl-certfile 和 --ssl-keyfile。",
+    "health_mismatch": "应用角色不匹配，或尚未就绪。"
   }
 }

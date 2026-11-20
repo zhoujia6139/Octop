@@ -37,6 +37,9 @@ export class CloudSessionClient {
   private renewal: ReturnType<typeof setTimeout> | null = null;
   private identity: CloudIdentity | null = null;
   private stopped = false;
+  private paused = false;
+  private generation = 0;
+  private readonly requests = new Set<AbortController>();
 
   constructor(options: CloudSessionOptions) {
     this.options = options;
@@ -44,7 +47,14 @@ export class CloudSessionClient {
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work, work);
+    const generation = this.generation;
+    const run = async () => {
+      if (this.paused || generation !== this.generation) throw new CloudSessionError("LOCAL_RUNTIME_PAUSED");
+      const result = await work();
+      if (this.paused || generation !== this.generation) throw new CloudSessionError("LOCAL_RUNTIME_PAUSED");
+      return result;
+    };
+    const next = this.queue.then(run, run);
     this.queue = next.catch(() => undefined);
     return next;
   }
@@ -55,12 +65,15 @@ export class CloudSessionClient {
     body?: unknown,
     token?: string,
   ): Promise<unknown> {
+    if (this.paused && !url.endsWith("/api/lifecycle/prepare")) throw new CloudSessionError("LOCAL_RUNTIME_PAUSED");
+    const controller = new AbortController();
+    this.requests.add(controller);
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
         method,
         redirect: "error",
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(url.endsWith("/api/lifecycle/prepare") ? 5_000 : 10_000)]),
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -68,8 +81,10 @@ export class CloudSessionClient {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
-      throw new CloudSessionError("CLOUD_UNAVAILABLE");
+      this.requests.delete(controller);
+      throw new CloudSessionError(this.paused ? "LOCAL_RUNTIME_PAUSED" : "CLOUD_UNAVAILABLE");
     }
+    try {
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as {
         error?: { code?: string };
@@ -79,7 +94,8 @@ export class CloudSessionClient {
           (response.status === 401 ? "AUTH_FAILED" : "CLOUD_UNAVAILABLE"),
       );
     }
-    return response.status === 204 ? null : response.json();
+    return response.status === 204 ? null : await response.json();
+    } finally { this.requests.delete(controller); }
   }
 
   private async local(
@@ -129,6 +145,7 @@ export class CloudSessionClient {
       "PUT",
       session,
     )) as CloudIdentity;
+    if (this.paused) throw new CloudSessionError("LOCAL_RUNTIME_PAUSED");
     this.identity = identity;
     this.schedule(session.expires_in);
     return identity;
@@ -307,6 +324,36 @@ export class CloudSessionClient {
       if (detachError) throw detachError;
       return { revoked };
     });
+  }
+
+  configuration(): Promise<{ cloud_url: string | null }> {
+    return this.local("/api/cloud/config", "GET") as Promise<{ cloud_url: string | null }>;
+  }
+
+  configure(cloudUrl: string): Promise<{ cloud_url: string | null }> {
+    return this.serialized(async () => {
+      if (this.identity) throw new CloudSessionError("AUTH_FAILED");
+      this.pendingMfa = this.pendingAccount = this.pendingOrigin = null;
+      return this.local("/api/cloud/config", "PUT", { cloud_url: cloudUrl }) as Promise<{ cloud_url: string | null }>;
+    });
+  }
+
+  async prepare(): Promise<void> {
+    this.paused = true;
+    this.generation++;
+    this.stopRenewal();
+    this.pendingMfa = this.pendingAccount = this.pendingOrigin = null;
+    this.identity = null;
+    for (const request of this.requests) request.abort();
+    // Do not queue behind an unavailable login server. Local persistence is
+    // independent of whether a cloud request can finish before OS sleep.
+    await this.local("/api/lifecycle/prepare", "POST");
+  }
+
+  resume(): Promise<CloudIdentity | null> {
+    this.paused = false;
+    this.pendingMfa = this.pendingAccount = this.pendingOrigin = null;
+    return this.renew();
   }
 
   current(): CloudIdentity | null {

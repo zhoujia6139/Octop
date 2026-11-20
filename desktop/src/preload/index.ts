@@ -4,7 +4,6 @@ import {
   type ClientSettings,
   type CloudSessionResult,
   type CloudIdentity,
-  type IssuedSession,
   type PlatformInfo,
   type UpdateCheckResult,
   type WindowChromeTheme,
@@ -122,6 +121,12 @@ const bridge = {
    * credential behind it never crosses this bridge.
    */
   cloud: {
+    configuration(): Promise<{ cloud_url: string | null }> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudConfig);
+    },
+    configure(cloudUrl: string): Promise<{ cloud_url: string | null }> {
+      return ipcRenderer.invoke(IPC_CHANNELS.cloudConfigure, cloudUrl);
+    },
     login(username: string, password: string): Promise<CloudSessionResult> {
       return ipcRenderer.invoke(IPC_CHANNELS.cloudLogin, username, password);
     },
@@ -141,17 +146,7 @@ const bridge = {
       return ipcRenderer.invoke(IPC_CHANNELS.cloudCurrent);
     },
   },
-  session: {
-    register(accessToken: string): Promise<boolean> {
-      return ipcRenderer.invoke(IPC_CHANNELS.sessionRegister, accessToken);
-    },
-    renew(): Promise<IssuedSession | null> {
-      return ipcRenderer.invoke(IPC_CHANNELS.sessionRenew);
-    },
-    revoke(accessToken: string): Promise<boolean> {
-      return ipcRenderer.invoke(IPC_CHANNELS.sessionRevoke, accessToken);
-    },
-  },
+
 } as const;
 
 export type OctopDesktopBridge = typeof bridge;

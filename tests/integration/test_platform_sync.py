@@ -441,6 +441,7 @@ async def test_file_deletion_recreation_and_historical_attachment_survive_restor
             f"/api/sync/messages/{message['item_id']}/attachments/{first['item_id']}"
         )
         assert response.status_code == 200 and response.content == b"first-version"
+        assert response.headers["X-Octop-File-Size"] == str(len(b"first-version"))
         before = len(await records(client, token))
         response = await local.post("/api/sync/retry")
         assert response.json()["pending"] == response.json()["conflicts"] == 0, response.text
