@@ -17,6 +17,7 @@ from octop.infra.identity.service import CloudIdentity
 from octop.infra.models.gateway import ModelGateway
 from octop.infra.models.ledger import ModelLedger
 from octop.infra.resources.service import CloudResources
+from octop.infra.sync.service import CloudSync
 from octop.infra.utils.ulid import new_ulid
 
 
@@ -31,6 +32,7 @@ class CloudApplication:
         self.db: DatabasePool | None = None
         self.schema_version = 0
         self.identity: CloudIdentity | None = None
+        self.sync: CloudSync | None = None
 
     def _open(self) -> tuple[DatabasePool, int]:
         self.settings.home.mkdir(parents=True, exist_ok=True)
@@ -48,6 +50,7 @@ class CloudApplication:
                 repo, SecretRepo(db), cloud_id=cloud_id, timezone=self.settings.default_timezone
             )
             self.resources = CloudResources(self.identity)
+            self.sync = CloudSync(self.identity)
             self.models = ModelGateway(
                 ModelLedger(
                     CloudModelRepo(db), self.identity, get_fernet(SecretRepo(db), PURPOSE_PROVIDER)
@@ -73,6 +76,7 @@ class CloudApplication:
                 await self.models.close()
                 self.models = None
             self.resources = None
+            self.sync = None
             self.identity = None
             db, self.db = self.db, None
             await asyncio.get_running_loop().run_in_executor(None, db.close)

@@ -102,3 +102,7 @@ P3 不改默认产品入口。Electron 调试仍使用 `--local-runtime`；登�
 - `tests/integration/test_independent_applications.py`：新应用依赖隔离与既有本地审批/取消回归。独立仅安装 cloud extra 的环境中，也验证了模型消费、幂等及费用结算。
 
 具体验收结果记录在根目录 Plan.md。
+
+## P5 接入
+
+P5 恢复保留原账号内运行实例 ID 和聊天关联；数据备份所有权不会授予模型使用权限。缺少当前定义/分配时恢复成禁用归档，有效模型、预算和正式资源权限仍由网关逐次检查。参见 [同步与恢复](platform-sync.md)。

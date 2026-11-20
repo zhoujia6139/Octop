@@ -1,6 +1,6 @@
 # Octop 桌面 Agent 与云端管理改造计划
 
-> 日期：2026-11-19。状态：P0、P1、P2、P3、P4 已完成验收；当前停在 P5 之前。
+> 日期：2026-11-19。状态：P0、P1、P2、P3、P4 已完成验收；P5 功能已完成候选 wheel 验收；运行库正式发布及 Octop 依赖锁定待执行。
 >
 > 本次修订采用「基于 octop-harness 建立新的云端与桌面应用层，选择性迁入 Octop 成熟能力」的路线。本文记录已确认的产品边界，并给出后续实现顺序。勾选项表示实现与验收均完成；尚未验收的探索性代码不计为完成。模块名、接口名和表名是设计建议，实施时结合现有代码确定，不代表已存在。
 
@@ -333,17 +333,41 @@ P4 验收记录（2026-11-19）：
 - 后端验收：最终 `make all` 通过，6054 passed、103 skipped；Ruff/格式与 mypy（731 个源文件）通过。最终资源与包专项 `uv run pytest tests/integration/test_platform_resources.py tests/unit/resources -q -x --tb=short` 为 49 passed、21 skipped；跳过项为未设置 PG 环境的参数化用例，已另行实测。身份、模型、独立应用、迁移与 i18n 的组合回归另有 182 passed、57 skipped，之后新增的删除/额度和 Unicode 碰撞用例均已纳入最终全量检查。
 - 数据库与隔离验收：临时 PostgreSQL 17 下 `uv run pytest tests/integration/test_platform_resources.py tests/integration/test_platform_models.py tests/integration/test_cloud_identity.py tests/unit/db/test_application_migrations.py tests/unit/resources -q -x --tb=short` 为 147 passed、2 skipped，含 SQLite/PG 两种数据库；两个跳过项为 Embedding 流式组合。仅安装 cloud extra 的全新环境没有 Harness、Memory、Browser、Gateway 或 LangChain，实际完成发布、分配、固定依赖下载、实例授权与 schema/OpenAPI 检查；测试 schema、容器及临时凭证已清理。
 - 前端与文档：仅增加错误码的 zh/en 文案，Dashboard `npx tsc -b`、`npm run lint`（0 errors、75 条现有 warnings）和 `make build-frontend` 通过；未修改 Electron 或产品页面。Scalar HTML、OpenAPI 的 summaries、请求/响应类型及鉴权已检查；本轮未宣称完成 GUI 渲染、OS keychain 或原生安装器验收，Linux/Windows 实机/CI 与产品集成仍按 P7 验收。配置与接口见 [docs/platform-resources.md](docs/platform-resources.md)，身份、模型和共享合同文档已同步更新。
-- 暂停点：P4 完成，停在 P5 之前。P5 聊天/文件/记忆同步、P6 页面与默认入口退役、P7 完整产品及打包验收仍未开始；未提交或推送代码。
+- 暂停点（P4 验收时）：P4 完成后停在 P5 之前；当时 P5–P7 尚未开始。当前 P5 的候选包验收见下节，P6/P7 仍未开始。
 
 ### P5：聊天、文件与记忆可靠同步
 
-- [ ] 实现持久化 outbox、云端幂等接收、游标、修订校验、删除标记与重试。
-- [ ] 将新本地运行服务的消息投影与附件数据接入同步，复用经过审查的序列化逻辑，支持工具调用关联、流式消息最终更新和中断状态。
-- [ ] 通过 workspace 抽象同步约定文件，验证摘要、路径及排除规则，补偿崩溃时漏记的文件变更。
-- [ ] 通过 Memory 公共接口同步逻辑记录、修订与删除；确需扩展时先在 `octop-memory` 完成，不复制该库实现。
-- [ ] 实现显式恢复与完整性检查；恢复记忆时按库能力重建本地索引，不上传整个活跃数据库。
+- [x] 实现持久化 outbox、云端幂等接收、游标、修订校验、删除标记与重试。
+- [x] 将新本地运行服务的消息投影与附件数据接入同步，复用经过审查的序列化逻辑，支持工具调用关联、流式消息最终更新和中断状态。
+- [x] 通过 workspace 抽象同步约定文件，验证摘要、路径及排除规则，补偿崩溃时漏记的文件变更。
+- [x] 通过 Memory 公共接口同步逻辑记录、修订与删除；确需扩展时先在 `octop-memory` 完成，不复制该库实现。
+- [x] 实现显式恢复与完整性检查；恢复记忆时按库能力重建本地索引，不上传整个活跃数据库。
 
 验收：断网、响应丢失、重复提交、乱序、重启和删除重试后数据一致；未同步内容不被旧云端数据覆盖；外部文件、凭证和检查点未被上传；恢复后聊天、文件、记忆及引用关系完整。
+
+P5 实施记录（2026-11-20，候选包验收完成，发布待执行）：
+
+- 归属：Octop 实现 `infra/sync/`、独立 sync repos、薄 HTTP 适配与 cloud v5 / local v3 双 SQL；文件安全/分片接口在 `octop-harness-p5` worktree，记忆逻辑变更/恢复在 `octop-memory-p5` worktree。原有运行库 checkout 未修改，未编辑已安装包源码。
+- 可靠性：本地消息投影与 outbox 同事务，首次发送后请求体和 operation ID 不变；未发送流式更新合并，避免逐 token 全量快照膨胀。云端在身份事务内确认修订、内容和幂等回执，支持删除、响应丢失和重启重试；原绑定未确认写入在绑定变化后保留为冲突。
+- 文件：明确只同步 `inbound/` 和 `artifacts/`，排除系统/凭证/检查点/缓存等；通过 workspace 公共接口 no-follow 枚举及分片读写，验证 NFC/大小写、大小和 SHA-256。分片与历史附件按用户隔离；不完整扫描不推进删除水位。
+- 记忆：通过新 Memory 公共接口捕获持久化修订/删除，覆盖 tree、episodes、digests 等逻辑类型，不复制活跃数据库或运行 metadata。恢复前排空 Harness 记忆写入，之后由库事务恢复并重建索引；候选支持 SQLite/PostgreSQL。
+- 恢复：显式固定 watermark，未同步本地内容跳过；失败/中断保留恢复屏障，显式重试完成。保留运行实例 ID、重新安装固定 skills；没有有效定义/分配时恢复为禁用归档。规范化聊天仅在下一次用户新 turn 时补入 Harness，不恢复云端检查点或重放旧工具。
+- 限制：1 MiB 分片/单逻辑记录、256 MiB 单文件、每用户 2 GiB 内容预留及 128 MiB 历史元数据；删除保留历史。新本地开启逻辑记忆存储/捕获/工具，不新增自动提炼策略或向量索引；产品页面和 Electron 退出/休眠接入仍在 P6。
+- 发布准备：用户要求额外准备运行库正式发布，目标版本 Harness 1.0.12、Memory 1.0.6；各自源码、测试、说明、版本及 wheel/sdist 已准备；已校验候选包内容与源码一致，并完成安装候选 wheel 的应用验收。尚未提交、推送、打 tag、发布 PyPI 或修改 Octop 的正式依赖锁定。现有锁文件仍指向旧运行库；接口不足时明确返回 `LOCAL_RUNTIME_UPGRADE_REQUIRED`。实际合同见 [docs/platform-sync.md](docs/platform-sync.md)。
+- 后端：安装实际 Harness 1.0.12 / Memory 1.0.6 候选 wheel 后，以 `UV_NO_SYNC=1 make all`（避免旧锁文件重装旧库）验收，6096 passed、120 skipped，Ruff/格式及 mypy（741 个源文件）通过。当前 `.venv` 加载 site-packages 的候选 wheel，不通过 editable checkout 运行应用测试。
+- 数据库：专用 PostgreSQL 17 下，身份、资源、模型、同步、独立工厂、迁移、i18n 与同步单元测试组合为 273 passed、2 skipped；两个跳过项属于 Embedding 非流式合同。单独的最终同步协议/路径/outbox 专项为 57 passed，含 SQLite/PostgreSQL 的响应丢失、重启、乱序、初始 tombstone、删除重建、旧附件、损坏下载、设备替换、跨用户、取消、归档恢复与显式恢复保护。
+- 运行库：Harness `make all` 为 2138 passed、20 skipped，mypy 207 源文件；Memory 专用 PG 下单独 `make all` 为 1687 passed、3 skipped，mypy 121 源文件。一次与 Octop 并行的高负载 Memory 检查出现 4 个既有召回/索引断言失败；同一候选未改代码，独立完整复验通过，没有放宽测试或调整召回策略。源码与 wheel 内包文件逐一字节比对一致。
+- 独立安装：全新 cloud extra 环境实际完成 SQLite/PG 的备份、分片、摘要、幂等、撤销与 schema/OpenAPI 检查，未安装/导入 Harness、Memory、Browser、Gateway 或 LangChain。全新 local-runtime extra 环境安装候选 wheel 后，以真实 Harness + 测试模型完成「模型 → 本地 read_file → 模型」、文件扫描及持久化 outbox，未安装 Gateway；未调用真实付费供应商。
+- 最终平台检查：Windows 文件提交改用固定源句柄重命名，避免自己持有的 no-delete-sharing 句柄阻止提交；新增模块 `mypy --platform win32` 通过。最终 Harness 完整检查仍为 2138 passed、20 skipped；在修正后的最终 wheel 下，Octop 同步/资源/路径/outbox 组合再验收为 99 passed。未把静态检查等同于 Windows 实机验证。
+- API/界面：Scalar HTML 和 OpenAPI 的 summaries、类型及角色路由集合已检查；Dashboard `npx tsc -b`、`npm run lint`（0 errors、75 条现有 warnings）、`make build-frontend` 通过。仅更新 zh/en 错误码，未实现 P6 产品页面、Electron 生命周期或跨平台实机/安装器验收。
+- 测试清理：专用 PostgreSQL 容器及测试 schema、临时 DSN、cloud/local 隔离环境已清理；保留候选包和验证日志，未触碰现有其他容器。
+- 发布准备额外交付：两个运行库分别位于相邻 `octop-harness-p5`、`octop-memory-p5` worktree；候选包、校验清单、发布说明、待应用的 Octop 依赖补丁及 Memory Wiki 八页的待推送补丁归档在 `dist/p5-runtime-candidates/`。PyPI 读取核实目标版本当时尚不存在；未提交、推送、打 tag、上传或推送 Wiki。
+
+发布门槛（本轮准备完成，实际发布尚待明确授权）：
+
+- [x] 准备并验证 Harness 1.0.12、Memory 1.0.6 的源码、说明、版本、wheel、sdist 和 SHA-256。
+- [ ] 按各仓库发布流程正式发布运行库，再应用 Octop 最低版本补丁并更新 `uv.lock`、验证普通 `uv sync --frozen`。旧锁文件目前仍然安装 P4 的运行库，因此不能将当前默认锁定状态视为已经完成 P5 的正式依赖切换。
+
 
 ### P6：接入产品 UI、生命周期并退役旧入口
 

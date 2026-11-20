@@ -13,6 +13,7 @@ from octop.api.applications.common import bounded_json_body, configure_http
 from octop.api.applications.identity import router as identity_router
 from octop.api.applications.models import router as models_router
 from octop.api.applications.resources import router as resources_router
+from octop.api.applications.sync import router as sync_router
 from octop.application_config import CloudSettings
 from octop.infra.applications.cloud import CloudApplication
 from octop.infra.applications.contracts import Health
@@ -36,6 +37,10 @@ def create_cloud_app(
         title="Octop Cloud API",
         description="Cloud accounts and single-device authorization. Initialize the first administrator with octop-cloud-init; use password and optional TOTP MFA to obtain a short-lived account session.",
         openapi_tags=[
+            {
+                "name": "sync",
+                "description": "Device-authorized logical backups, immutable revisions and resumable user-scoped content. No Agent execution.",
+            },
             {
                 "name": "resources",
                 "description": "Immutable Agent/skill versions, current-device assignments, personal resources and installation receipts.",
@@ -66,13 +71,16 @@ def create_cloud_app(
     app.include_router(identity_router)
     app.include_router(models_router)
     app.include_router(resources_router)
+    app.include_router(sync_router)
 
     @app.middleware("http")
     async def protect_credentials(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path == "/api/models/requests" or request.url.path.startswith(
-            ("/api/resources/", "/api/resource-admin/")
+        if (
+            request.url.path == "/api/models/requests"
+            or request.url.path.startswith(("/api/resources/", "/api/resource-admin/"))
+            or request.url.path in {"/api/sync/records", "/api/sync/blobs"}
         ):
             code = (
                 ErrorCode.MODEL_REQUEST_TOO_LARGE

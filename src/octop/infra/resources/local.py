@@ -106,11 +106,16 @@ class LocalResources:
                 raise OctopError.localized(ErrorCode.AUTH_FAILED)
             async with self._lock:
                 yield
+        except asyncio.CancelledError:
+            if self.closed:
+                raise OctopError.localized(ErrorCode.AUTH_FAILED) from None
+            raise
         finally:
             self._calls.discard(task)
 
     async def close(self) -> None:
         self.closed = True
+        self._wake.set()
         current = asyncio.current_task()
         tasks = {t for t in self._calls if t is not current and not t.done()}
         if self._task and self._task is not current and not self._task.done():
@@ -458,6 +463,14 @@ class LocalResources:
                 try:
                     await self._request("PUT", "resources/reports", json=report.model_dump())
                 except OctopError as error:
+                    if (
+                        error.code == ErrorCode.NOT_FOUND
+                        and row["scope"] == "platform"
+                        and row["desired_revision"] is None
+                    ):
+                        # A replacement binding has no assignment to report.
+                        # Keep its archive locally without claiming cloud access.
+                        continue
                     if error.code != ErrorCode.RESOURCE_CONFLICT:
                         raise
             return await self.list_resources()

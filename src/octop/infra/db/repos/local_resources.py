@@ -235,6 +235,13 @@ class LocalResourceRepo:
                 "SELECT value FROM local_resource_state WHERE key='binding'"
             ).fetchone()
             if not previous or previous[0] != binding:
+                if previous:
+                    conn.execute(
+                        "UPDATE local_resource_outbox SET state='conflict' WHERE state='pending'"
+                    )
+                    conn.execute(
+                        "UPDATE local_resources SET sync_state='conflict',error_code='RESOURCE_CONFLICT' WHERE scope='personal' AND sync_state='pending'"
+                    )
                 conn.execute(
                     "UPDATE local_resources SET desired_revision=NULL,install_state='pending' WHERE scope='platform'"
                 )

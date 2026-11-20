@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from octop.infra.db.repos.local_resources import LocalResourceRepo
     from octop.infra.resources.contracts import SkillSpec, VersionView
     from octop.infra.resources.local import LocalResources
+    from octop.infra.sync.local import LocalSync
 
 
 class LocalApplication:
@@ -54,6 +55,7 @@ class LocalApplication:
         self._model_factory = model_factory
         self.model_platform = model_platform
         self.resources: LocalResources | None = None
+        self.sync: LocalSync | None = None
         self._turn_agents: dict[str, str] = {}
         self.model_turns: dict[str, tuple[str, str]] = {}
         self._agents: dict[str, HarnessAgent] = {}
@@ -109,7 +111,13 @@ class LocalApplication:
             default_model=body.model_id,
             system_prompt=body.system_prompt,
             backend={"type": "local_shell", "root_dir": str(workspace), "virtual_mode": False},
-            memory_enabled=False,
+            memory_enabled=self.sync is not None,
+            memory_namespace="agent_" + agent_id,
+            memory_backend_config={
+                "db_path": str(self.settings.home / "memory" / (agent_id + ".sqlite"))
+            },
+            memory_aux_model_enabled=False,
+            memory_extract_on_session_end=False,
             memory_jsonl_enabled=False,
             memory=None,
             web_search_tools=False,
@@ -137,7 +145,7 @@ class LocalApplication:
             raise
 
     async def _close_agent(self, agent: HarnessAgent) -> None:
-        await agent.aclose()
+        await agent.aclose(wait_for_memory=True)
         if self.model_platform:
             await self.model_platform.release_factory(agent.model_factory)
 
@@ -301,6 +309,9 @@ class LocalApplication:
         if row is None or not row.enabled:
             raise OctopError.localized(ErrorCode.AGENT_NOT_FOUND)
         thread_id = new_ulid()
+        if self.sync:
+            await self.sync.create_thread(thread_id, agent_id)
+            return ThreadView(thread_id=thread_id, agent_id=agent_id)
         await asyncio.get_running_loop().run_in_executor(
             None, storage.threads.create, thread_id, agent_id
         )
@@ -321,10 +332,17 @@ class LocalApplication:
             task.cancel()
         elif pending := self._pending.pop(thread_id, None):
             turn_id, sequence = pending
-            self._turn_agents.pop(thread_id, None)
-            await asyncio.get_running_loop().run_in_executor(
-                None, self._storage().turns.set_status, turn_id, "cancelled"
-            )
+            agent_id = self._turn_agents.pop(thread_id, None)
+            if self.sync:
+                assert agent_id is not None
+                projection = await self.sync.projection(agent_id, thread_id, turn_id)
+                await projection.load()
+                await projection.finish("cancelled")
+                self.sync.changed()
+            else:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self._storage().turns.set_status, turn_id, "cancelled"
+                )
             return TurnEvent(
                 turn_id=turn_id,
                 thread_id=thread_id,
@@ -341,9 +359,12 @@ class LocalApplication:
         *,
         text: str | None = None,
         decisions: list[dict[str, Any]] | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> AsyncGenerator[TurnEvent, None]:
         if thread_id in self._active:
             raise OctopError.localized(ErrorCode.THREAD_TURN_ACTIVE)
+        if self.sync:
+            await self.sync.ensure_ready(agent_id, thread_id)
         if self.resources:
             await self.resources.install_pending()
         # Installing a pending version yields; another start may have claimed
@@ -358,6 +379,7 @@ class LocalApplication:
         turn_id, sequence = new_ulid(), 0
         status = TurnStatus.INTERRUPTED
         created = False
+        projection = None
 
         def event(kind: str, data: dict[str, Any]) -> TurnEvent:
             nonlocal sequence
@@ -373,31 +395,59 @@ class LocalApplication:
             if not belongs:
                 raise OctopError.localized(ErrorCode.NOT_FOUND)
             agent = await self._agent(agent_id)
+            if self.sync:
+                await self.sync.ensure_ready(agent_id, thread_id)
+            attachments = (
+                await self.sync.attachments(agent_id, attachment_ids or []) if self.sync else []
+            )
             if decisions is not None:
                 pending = self._pending.pop(thread_id, None)
                 if pending is None:
                     raise OctopError.localized(ErrorCode.LOCAL_APPROVAL_NOT_PENDING)
                 turn_id, sequence = pending
                 source = agent.resume_hitl(thread_id, decisions)
-                await asyncio.get_running_loop().run_in_executor(
-                    None, storage.turns.set_status, turn_id, "running"
-                )
+                if self.sync:
+                    projection = await self.sync.projection(agent_id, thread_id, turn_id)
+                    await projection.begin("", [], resume=True)
+                else:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, storage.turns.set_status, turn_id, "running"
+                    )
             else:
                 if thread_id in self._pending:
                     raise OctopError.localized(ErrorCode.THREAD_TURN_ACTIVE)
+                from langchain_core.messages import BaseMessage, HumanMessage
                 from octop_harness import ChatRequest
 
+                message_id = None
+                if self.sync:
+                    await self.sync.rehydrate(agent_id, thread_id)
+                    projection = await self.sync.projection(agent_id, thread_id, turn_id)
+                    message_id = await projection.begin(text or "", attachments, resume=False)
+                content = text or ""
+                if attachments and self.sync:
+                    for attachment in attachments:
+                        row = await asyncio.get_running_loop().run_in_executor(
+                            None, self.sync.repo.get, attachment.file_id
+                        )
+                        if row:
+                            import json
+
+                            content += "\n[Attachment: " + json.loads(row["data"])["path"] + "]"
+
+                input_messages: list[BaseMessage] = [HumanMessage(id=message_id, content=content)]
                 source = agent.stream(
                     ChatRequest(
-                        messages=text or "",
+                        messages=input_messages,
                         thread_id=thread_id,
                         agent_id=agent_id,
                         source="desktop",
                     )
                 )
-                await asyncio.get_running_loop().run_in_executor(
-                    None, storage.turns.create, turn_id, thread_id
-                )
+                if not self.sync:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, storage.turns.create, turn_id, thread_id
+                    )
             created = True
             self.model_turns[thread_id] = (agent_id, turn_id)
             status = TurnStatus.COMPLETED
@@ -408,6 +458,8 @@ class LocalApplication:
                         kind = str(chunk.get("type", "state_update"))
                         if kind == "hitl_required":
                             status = TurnStatus.AWAITING_APPROVAL
+                        if projection:
+                            await projection.capture(chunk)
                         yield event(kind, chunk)
         except asyncio.CancelledError:
             status = TurnStatus.INTERRUPTED if self._closing else TurnStatus.CANCELLED
@@ -428,17 +480,22 @@ class LocalApplication:
             raise
         finally:
             if created:
-                await asyncio.shield(
-                    asyncio.get_running_loop().run_in_executor(
-                        None, storage.turns.set_status, turn_id, status.value
+                if projection:
+                    await projection.finish(status.value)
+                else:
+                    await asyncio.shield(
+                        asyncio.get_running_loop().run_in_executor(
+                            None, storage.turns.set_status, turn_id, status.value
+                        )
                     )
-                )
             self._active.pop(thread_id, None)
             self.model_turns.pop(thread_id, None)
             if status != TurnStatus.AWAITING_APPROVAL:
                 self._turn_agents.pop(thread_id, None)
             if self.resources and not self._closing:
                 self.resources.changed()
+            if self.sync and not self._closing:
+                self.sync.changed()
         terminal = event("turn.status", {"status": status.value})
         if status == TurnStatus.AWAITING_APPROVAL:
             self._pending[thread_id] = (turn_id, sequence)
@@ -446,6 +503,8 @@ class LocalApplication:
 
     async def close(self, *, close_model_factory: bool = True) -> None:
         self._closing = True
+        if self.sync:
+            await self.sync.close()
         if self.resources:
             await self.resources.close()
         tasks = list(self._active.values())

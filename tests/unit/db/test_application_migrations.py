@@ -20,8 +20,8 @@ def test_new_watermark_is_independent_of_legacy_version(tmp_path: Path):
         with db.transaction() as conn:
             conn.execute("CREATE TABLE _schema_version (version INTEGER)")
             conn.execute("INSERT INTO _schema_version VALUES (999)")
-        assert migrate_application(db, "cloud") == 4
-        assert migrate_application(db, "cloud") == 4
+        assert migrate_application(db, "cloud") == 5
+        assert migrate_application(db, "cloud") == 5
         with db.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 999
             conn.execute("UPDATE cloud_schema_version SET version=999")
@@ -67,8 +67,8 @@ def test_postgresql_schema_pairs_initialize_idempotently_and_reference_public_id
         try:
             db = PostgresPool(make_conninfo(dsn, options=f"-csearch_path={schema}"))
             for role in ("cloud", "local"):
-                assert migrate_application(db, role) == (4 if role == "cloud" else 2)
-                assert migrate_application(db, role) == (4 if role == "cloud" else 2)
+                assert migrate_application(db, role) == (5 if role == "cloud" else 3)
+                assert migrate_application(db, role) == (5 if role == "cloud" else 3)
             with db.transaction() as conn:
                 conn.execute(
                     "INSERT INTO local_agents(agent_id,name,model_id,created_at) VALUES ('agent-a','A','platform/model',1)"
@@ -104,8 +104,8 @@ def test_cloud_v2_identity_survives_model_ledger_upgrade(tmp_path: Path, monkeyp
             conn.execute(
                 "INSERT INTO cloud_users(username,password_hash,role) VALUES ('preserved','argon2-record','admin')"
             )
-        assert migrate_application(db, "cloud") == 4
-        assert migrate_application(db, "cloud") == 4
+        assert migrate_application(db, "cloud") == 5
+        assert migrate_application(db, "cloud") == 5
         with db.connect() as conn:
             assert conn.execute("SELECT username,password_hash FROM cloud_users").fetchone()[:] == (
                 "preserved",
@@ -116,7 +116,9 @@ def test_cloud_v2_identity_survives_model_ledger_upgrade(tmp_path: Path, monkeyp
         db.close()
 
 
-@pytest.mark.parametrize("role,previous,current", [("cloud", 3, 4), ("local", 1, 2)])
+@pytest.mark.parametrize(
+    "role,previous,current", [("cloud", 3, 5), ("local", 1, 3), ("cloud", 4, 5), ("local", 2, 3)]
+)
 def test_resource_upgrade_preserves_prior_application_records(
     tmp_path: Path, monkeypatch, role, previous, current
 ):

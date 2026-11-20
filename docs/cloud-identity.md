@@ -88,3 +88,7 @@ $OCTOP_HOME/local/accounts/<sha256(cloud_origin:cloud_id:user_id)>/
 - `desktop/src/main/protocol/` 测试：编码控制路径拒绝、WS 上游本机凭证注入。
 
 实际验收结果记录在根目录 Plan.md。P3 网关与账本参见 [platform-models.md](platform-models.md)，P4 资源发布与安装参见 [platform-resources.md](platform-resources.md)；P5 及之后阶段仍按计划实施。
+
+## P5 接入
+
+P5 数据与个人资源 outbox 绑定原账号和设备代次；更换绑定后，未确认操作保留为冲突，不静默使用新代次上传。账号目录内数据保留，设备撤销会停止传输并等待已开始的本地事务。参见 [同步与恢复](platform-sync.md)。

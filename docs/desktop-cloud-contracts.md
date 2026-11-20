@@ -184,3 +184,7 @@ P2 已获用户授权，实施了密码 + TOTP MFA（含恢复码）、云端单
 P2 审查后直接复用了 Argon2 密码策略、TOTP 原语、恢复码生成/规范化和 Fernet 能力；MFA 包的旧服务入口改为按需导出以切断 SharedServices 依赖。新 Token 采用独立 purpose 的随机不透明凭证、服务端摘要和实时身份校验，未迁入旧 JWT 的离线角色信任。所选登录方式已由用户明确为密码 + TOTP，不迁入 SSO、LDAP 或 Passkey。Electron 复用 DeviceCredentialStore/safeStorage，但云端长期凭证与旧 loopback 凭证存储隔离。
 
 旧探索性定义接口的进程内锁不作为新资源写入的事务保证，P4 需使用新 schema 的数据库事务与约束。
+
+## P5 接入
+
+P5 候选补齐 `BackendWorkspace` 的无需模型/no-follow/分片传输接口及 `Memory.sync_changes/restore_sync_changes/close`，分别由运行库自身实现。Harness 的可选 `aclose(wait_for_memory=True)` 提供恢复前的记忆写入排空边界。候选目标为 Harness 1.0.12、Memory 1.0.6；正式发布与 Octop 依赖锁定尚未执行，不能把旧锁文件或相邻源码视为已发布依赖。云端 v5、本地 v3 的实际合同及 API 见 [同步与恢复](platform-sync.md)。

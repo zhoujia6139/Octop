@@ -17,6 +17,7 @@ from starlette.background import BackgroundTask
 
 from octop.api.applications.common import bounded_json_body, configure_http
 from octop.api.applications.local_resources import router as resources_router
+from octop.api.applications.local_sync import router as sync_router
 from octop.application_config import LocalSettings
 from octop.infra.applications.contracts import (
     Health,
@@ -68,6 +69,7 @@ class TurnCommand(BaseModel):
     type: Literal["start", "resume", "cancel"]
     text: str | None = Field(default=None, max_length=100_000)
     decisions: list[ApprovalDecision] | None = None
+    attachment_ids: list[PublicId] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def required_payload(self) -> TurnCommand:
@@ -77,6 +79,8 @@ class TurnCommand(BaseModel):
             raise ValueError("start requires text only")
         if self.type == "resume" and (not self.decisions or self.text is not None):
             raise ValueError("resume requires approval decisions only")
+        if self.type != "start" and self.attachment_ids:
+            raise ValueError("attachments require a new turn")
         if self.type == "cancel" and (self.text is not None or self.decisions is not None):
             raise ValueError("cancel does not accept a payload")
         return self
@@ -106,6 +110,7 @@ def create_local_app(
         openapi_url="/api/openapi.json" if settings.enable_api_docs else None,
     )
     app.include_router(resources_router)
+    app.include_router(sync_router)
     app.state.accounts = accounts
     app.state.local = accounts.runtime
     configure_http(app, api_docs=settings.enable_api_docs)
@@ -150,7 +155,7 @@ def create_local_app(
         return Health(
             role="local",
             ok=accounts.started,
-            schema_version=accounts.runtime.schema_version if accounts.runtime else 2,
+            schema_version=accounts.runtime.schema_version if accounts.runtime else 3,
         )
 
     @app.get(
@@ -369,6 +374,7 @@ def create_local_app(
                         agent_id,
                         thread_id,
                         text=command.text,
+                        attachment_ids=command.attachment_ids,
                         decisions=[item.model_dump(exclude_none=True) for item in command.decisions]
                         if command.decisions is not None
                         else None,

@@ -119,6 +119,9 @@ class LocalAccounts:
             verified = await self._validate(grant.access_token)
             if verified != grant.identity:
                 raise OctopError.localized(ErrorCode.AUTH_FAILED)
+            from octop.infra.sync.local import require_sync_runtime
+
+            require_sync_runtime()
             if self.identity != verified or self.runtime is None:
                 await self._detach()
                 namespace = hashlib.sha256(
@@ -161,7 +164,12 @@ class LocalAccounts:
                     identity=verified,
                     access=self.device_access,
                 )
+                from octop.infra.sync.local import LocalSync
+
+                self.runtime.sync = LocalSync(self.runtime, self.runtime.resources)
+                await self.runtime.sync.recover()
                 self.runtime.resources.start()
+                self.runtime.sync.start()
             return verified
 
     def require_runtime(self) -> LocalApplication:

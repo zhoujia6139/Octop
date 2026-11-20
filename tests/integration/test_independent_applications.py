@@ -56,7 +56,7 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
                     "protocol_version": 1,
                     "role": "cloud",
                     "ok": True,
-                    "schema_version": 4,
+                    "schema_version": 5,
                 }
                 paths = (await client.get("/api/openapi.json")).json()["paths"]
                 assert "/api/auth/login" in paths
@@ -76,6 +76,12 @@ async def test_cloud_initializes_only_its_own_schema(tmp_path: Path):
                     "cloud_resource_changes",
                     "cloud_resource_operations",
                     "cloud_resource_reports",
+                    "cloud_sync_agents",
+                    "cloud_sync_items",
+                    "cloud_sync_versions",
+                    "cloud_sync_operations",
+                    "cloud_sync_blobs",
+                    "cloud_sync_chunks",
                     "cloud_model_providers",
                     "cloud_model_rates",
                     "cloud_models",
